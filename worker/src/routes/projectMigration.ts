@@ -455,6 +455,9 @@ export async function handleMigrationExecute(
       description: 'Migrated legacy Builly workspace',
       enabledModules: [...ALL_PROJECT_MODULES],
     });
+    if (!('project' in created) || !created.project) {
+      throw new HierarchyServiceError('Failed to create target Project.', 500, 'PROJECT_CREATE_FAILED');
+    }
     resolvedProject = created.project;
   } else {
     const targetProjectId = (body.targetProjectId || '').trim();

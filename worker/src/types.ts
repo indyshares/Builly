@@ -1,5 +1,6 @@
 export interface WorkerEnv {
   DB: D1Database;
+  ASSETS?: Fetcher;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY?: string;
   GOOGLE_OAUTH_CLIENT_ID: string;

@@ -1,6 +1,10 @@
+#:schema ../node_modules/wrangler/config-schema.json
 name = "builly-workspace-worker"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
+
+[observability]
+enabled = true
 
 [vars]
 GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
@@ -14,11 +18,12 @@ GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_CLIENT_SECRET
 # - TOKEN_ENCRYPTION_KEY (base64 32-byte key for AES-256-GCM)
-# - SUPABASE_JWT_SECRET (optional fallback; Worker verifies via Supabase Auth /auth/v1/user or JWKS)
+# - SUPABASE_ANON_KEY (optional; forwarded as apikey header when verifying Supabase JWT)
 
-# Bind Cloudflare D1 database for encrypted OAuth states & Workspace credential ciphertext ONLY
-# (NEVER store portfolio/page/CMS data in D1):
+# Bind Cloudflare D1 database for encrypted OAuth vault & Workspace registry pointers:
 # [[d1_databases]]
 # binding = "DB"
 # database_name = "builly_oauth_vault"
 # database_id = "YOUR_D1_DATABASE_ID"
+# migrations_dir = "migrations"
+

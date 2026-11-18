@@ -906,7 +906,7 @@ describe('Workspace Hierarchy Service & Console API (Phase 1)', () => {
     });
 
     expect(first.deduplicated).toBe(false);
-    expect(first.attachedSitesCount).toBe(1);
+    expect((first as { attachedSitesCount: number }).attachedSitesCount).toBe(1);
     expect(mock.tables.organizations).toHaveLength(1);
     expect(mock.tables.projects).toHaveLength(1);
     expect(mock.tables.projectModules).toHaveLength(ALL_PROJECT_MODULES.length);

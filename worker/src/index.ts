@@ -117,6 +117,10 @@ export default {
       }
     }
 
+    if (!pathname.startsWith('/api/') && env.ASSETS) {
+      return env.ASSETS.fetch(request);
+    }
+
     if (!response) {
       response = Response.json({ error: 'Not Found' }, { status: 404 });
     }

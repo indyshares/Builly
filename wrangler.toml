@@ -1,0 +1,38 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "builly-workspace"
+main = "worker/src/index.ts"
+compatibility_date = "2026-10-01"
+
+# Unified Cloudflare Workers + Static Assets (Vite SPA + /api/* Worker)
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[observability]
+enabled = true
+
+# Cloudflare D1 Registry & Encrypted OAuth Vault
+# Create with: npx wrangler d1 create builly_oauth_vault
+# Then replace database_id below with your generated D1 UUID before deploying.
+[[d1_databases]]
+binding = "DB"
+database_name = "builly_oauth_vault"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "worker/migrations"
+
+[vars]
+GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
+
+# Configure per environment in Cloudflare Dashboard -> Settings -> Variables and Secrets
+# (or uncomment below if deploying directly via CLI):
+# SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
+# ALLOWED_FRONTEND_ORIGINS = "https://builly.indyshares.com,http://localhost:3000,http://localhost:8787"
+# GOOGLE_OAUTH_REDIRECT_URI = "https://builly.indyshares.com/api/google/oauth/callback"
+
+# Required Worker Secrets (set via `npx wrangler secret put <KEY>` or Cloudflare Dashboard — NEVER commit):
+# - GOOGLE_OAUTH_CLIENT_ID
+# - GOOGLE_OAUTH_CLIENT_SECRET
+# - TOKEN_ENCRYPTION_KEY   (base64 32-byte key for AES-256-GCM)
+# - SUPABASE_ANON_KEY      (optional; forwarded as apikey header when verifying Supabase JWT)

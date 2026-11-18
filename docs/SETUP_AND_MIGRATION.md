@@ -34,26 +34,41 @@ VITE_GOOGLE_OAUTH_CLIENT_ID="YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.
    - `http://localhost:3000/auth/callback`
    - `https://<your-production-domain>/auth/callback`
 
-## 3. Cloudflare Worker Setup (`/worker`)
+## 3. Cloudflare Unified Deployment Setup (Frontend + Worker + D1)
 
-1. Create a Cloudflare D1 database for encrypted OAuth states and Workspace credentials:
+Builly uses a root `wrangler.toml` with Cloudflare Workers + Static Assets (`./dist`) so the React SPA and `/api/*` Worker share one origin (`VITE_WORKER_API_URL=""`).
+
+1. Create a Cloudflare D1 database and apply all migrations from the project root:
    ```bash
-   cd worker
    npx wrangler d1 create builly_oauth_vault
-   npx wrangler d1 execute builly_oauth_vault --file=./migrations/0001_workspace_oauth.sql
+   # Paste the returned database_id into root wrangler.toml under [[d1_databases]]
+   npx wrangler d1 migrations apply DB --remote
    ```
-2. Update `worker/wrangler.toml` with the D1 binding, `SUPABASE_URL`, `ALLOWED_FRONTEND_ORIGINS`, and `GOOGLE_OAUTH_REDIRECT_URI` (`https://<worker-domain>/api/google/oauth/callback`).
-3. Set Worker secrets (never commit):
+2. Configure environment variables in Cloudflare Dashboard -> **Workers & Pages -> Settings -> Variables and Secrets** (or `[vars]` in `wrangler.toml`):
+   - Build-time Vite variables (set in Cloudflare **Workers Builds -> Build settings -> Variables** if building in Cloudflare):
+     - `VITE_SUPABASE_URL`
+     - `VITE_SUPABASE_ANON_KEY`
+     - `VITE_GOOGLE_OAUTH_CLIENT_ID`
+     - `VITE_WORKER_API_URL=""` (leave blank for same-origin `/api/*`)
+   - Runtime Worker variables:
+     - `SUPABASE_URL`
+     - `ALLOWED_FRONTEND_ORIGINS` (e.g. `https://builly.indyshares.com,http://localhost:3000`)
+     - `GOOGLE_OAUTH_REDIRECT_URI` (`https://<your-domain>/api/google/oauth/callback`)
+3. Set Worker Secrets (never commit):
    ```bash
    npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID
    npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
    npx wrangler secret put TOKEN_ENCRYPTION_KEY   # 32-byte base64 key
    ```
-4. Add `https://<worker-domain>/api/google/oauth/callback` as an Authorized Redirect URI in Google Cloud Console OAuth 2.0 Client settings.
-5. Deploy Worker:
-   ```bash
-   npm run deploy
-   ```
+4. Add `https://<your-domain>/api/google/oauth/callback` as an Authorized Redirect URI in Google Cloud Console OAuth 2.0 Client settings.
+5. Cloudflare Workers Builds settings (or local CLI deploy):
+   - **Build command**: `npm run cf:build` (or `npm run build`)
+   - **Deploy command**: `npx wrangler deploy`
+   - Or run locally from root:
+     ```bash
+     npm run cf:deploy
+     ```
+   *(If deploying `/worker` separately from the frontend, use `worker/wrangler.toml` and set `VITE_WORKER_API_URL` to the Worker URL.)*
 
 ## 4. Phased Migration Notes & Current Limitations
 - While `VITE_WORKER_API_URL` is unset or `/worker` is not deployed, the `/workspace` onboarding page transparently reports that server-side Worker OAuth is unconfigured and does **not** store refresh tokens in the browser.
