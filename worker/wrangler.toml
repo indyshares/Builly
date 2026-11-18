@@ -1,0 +1,24 @@
+name = "builly-workspace-worker"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
+
+# Configure in Cloudflare Dashboard or per environment:
+# SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
+# ALLOWED_FRONTEND_ORIGINS = "https://builly.me,http://localhost:3000"
+# GOOGLE_OAUTH_REDIRECT_URI = "https://api.builly.me/api/google/oauth/callback"
+
+# Required Worker Secrets (set via `wrangler secret put` — NEVER commit):
+# - GOOGLE_OAUTH_CLIENT_ID
+# - GOOGLE_OAUTH_CLIENT_SECRET
+# - TOKEN_ENCRYPTION_KEY (base64 32-byte key for AES-256-GCM)
+# - SUPABASE_JWT_SECRET (optional fallback; Worker verifies via Supabase Auth /auth/v1/user or JWKS)
+
+# Bind Cloudflare D1 database for encrypted OAuth states & Workspace credential ciphertext ONLY
+# (NEVER store portfolio/page/CMS data in D1):
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "builly_oauth_vault"
+# database_id = "YOUR_D1_DATABASE_ID"

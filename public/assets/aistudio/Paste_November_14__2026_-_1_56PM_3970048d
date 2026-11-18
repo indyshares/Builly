@@ -1,0 +1,712 @@
+# IndyShares Portfolio Builder
+# Element Library, Asset System, Component & Template Library, and Global/Local Header & Footer
+**Supplemental Product, UX, and Technical Specification**  
+**Version:** 1.0  
+**Status:** Proposed baseline for implementation  
+**Document type:** Additive change specification
+
+---
+
+## 1. Purpose
+
+This document extends the existing IndyShares Portfolio Builder specifications. It defines a richer Element Library, an asset workflow for icons and logos, reusable components and templates, and a per-page Header/Footer system with Global, Local, and None modes.
+
+This is an additive specification. It does not replace the existing PRD, system design, page-management specification, responsive specification, or full CSS Property Editor specification. Where this document overlaps them, the established architecture remains authoritative.
+
+### Product principles
+
+1. The Builder must support real website construction, not only a small set of decorative blocks.
+2. Elements, components, and templates must share one compatible document/component model.
+3. Users must be able to save their own work for reuse without losing editability.
+4. Global changes must have predictable scope; local changes must not unexpectedly modify other pages.
+5. Desktop, Tablet, and Mobile behavior must be supported consistently.
+6. User-owned portfolio source data and assets remain in the user's Google Workspace.
+7. Supabase remains Authentication-only. Do not store portfolio, page, component, template, asset, or publishing records in Supabase.
+
+---
+
+## 2. Terminology and object model
+
+| Object | Definition | Example |
+|---|---|---|
+| Element | A basic insertable building block | Heading, Image, Button, Container |
+| Component | A reusable composition of one or more elements | Profile Card, Navbar, Project Card |
+| Section Template | A reusable section-level starting layout | Hero, Skills, Testimonials |
+| Header Template | A reusable header composition | Main Header, Minimal Header |
+| Footer Template | A reusable footer composition | Standard Footer, Compact Footer |
+| Page Template | A starting layout for one page | About, Contact, Project Detail |
+| Site Template | A starter website containing multiple pages and shared design | Portfolio starter site |
+| Asset | A media or design file used by elements/components | SVG icon, logo, image, font |
+| Global Component | A shared component referenced by multiple pages | Global Header |
+| Local Component | A page-owned component instance or definition | Contact page custom header |
+
+An Element is not automatically a Template. A selected group of elements can be saved as a Component or a Template through an explicit save action.
+
+---
+
+## 3. Element Library
+
+### 3.1 Panel requirements
+
+Replace the current small, card-only element list with a searchable Element Library. The reference screenshot shows the existing panel pattern (search, insertion target, category chips, and element cards); retain the useful interaction model while expanding its coverage and visual clarity.
+
+Required capabilities:
+
+- Search by element name, description, category, and supported keywords.
+- Category filters and optional subcategory filters.
+- Icon-led element rows/cards with consistent iconography.
+- Clear element name and short description.
+- Drag-and-drop insertion.
+- Click-to-insert as an accessible alternative to drag-and-drop.
+- Insertion target controls: inside selected, after selected, and end of page, where applicable.
+- Recently Used and Favorites.
+- Built-in Elements and My Components/Templates.
+- Preview or concise description before insertion for complex elements.
+- Empty, loading, no-results, and error states.
+- Keyboard navigation and visible focus states.
+- Responsive panel behavior across Desktop, Tablet, and Mobile.
+
+Do not use icons as the only accessible label. Every item must have a readable name and accessible description.
+
+### 3.2 Recommended catalog
+
+The catalog below is the minimum proposed coverage, not a hard limit. Avoid shipping duplicate elements that differ only by styling. Prefer a flexible base element with variants when behavior is genuinely the same.
+
+| Category | Element examples |
+|---|---|
+| Layout | Container, Flex Container, Grid Container, Columns, Stack, Spacer, Divider, Section |
+| Basic & Typography | Heading, Paragraph, Rich Text, Link, Button, List, Blockquote, Code, Label |
+| Media | Image, Image Gallery, Video, Audio, Icon, Logo, Background Media, Embed |
+| Navigation | Navbar, Navigation Menu, Breadcrumbs, Pagination, Anchor Link, Social Links |
+| Forms & Interaction | Form, Text Input, Textarea, Select, Checkbox, Radio Group, Toggle, Modal, Tooltip, Tabs, Accordion |
+| Portfolio | Profile, Project Card, Project Grid, Skills, Experience, Education, Timeline, Testimonials, Social Profile |
+| Dynamic Data | Dynamic Text, Dynamic Image, Dynamic Link, Collection List, Repeater, Collection Grid, Data Table |
+| Advanced | HTML, Custom CSS, Custom JavaScript, SVG, Lottie, Chart, Map, Custom Embed |
+
+### 3.3 Element metadata
+
+Each element definition should declare:
+
+- Stable `elementType` identifier.
+- Display name, description, category, keywords.
+- Icon reference.
+- Engine/component implementation identifier.
+- Default properties and default child structure, if any.
+- Supported child rules and nesting constraints.
+- Content and style property schemas.
+- Responsive property support.
+- Accessibility defaults and requirements.
+- Whether the element is safe for public rendering.
+- Whether it supports dynamic data binding.
+- Whether it is available in the current product tier, if tiering is later introduced.
+- Version and migration metadata.
+
+The Element Library must be metadata-driven. Do not hard-code each panel card independently from the underlying element registry.
+
+### 3.4 Insertion and nesting
+
+- Respect valid parent/child constraints.
+- Show a clear insertion indicator before committing a drop.
+- Prevent invalid nesting or explain why it is disallowed.
+- Preserve selection and undo/redo behavior.
+- When inserting a complex element, insert a valid editable component tree, not a flattened image or opaque HTML blob.
+- Provide non-drag insertion and reorder controls for accessibility and touch devices.
+
+---
+
+## 4. Icon, Logo, and Asset System
+
+### 4.1 Distinct element types
+
+Icon, Logo, and Image must be distinct element types because their editing needs differ.
+
+**Icon Element**
+- Choose from installed/licensed icon sets.
+- Search by name and keywords.
+- Configure size, color, stroke/fill where supported, alignment, and optional background/container.
+- Support hover/focus states and link/action behavior.
+- Support SVG assets subject to validation and sanitization.
+
+**Logo Element**
+- Upload or select an asset from the user's Asset Library.
+- Support SVG, PNG, and WebP subject to validation.
+- Optional text logo and icon-plus-text composition.
+- Configure width, max-width, alignment, object-fit, and responsive variants.
+- Optional destination URL, commonly the site's Home page.
+- Support light/dark variants when the user provides them.
+- Preserve aspect ratio by default.
+
+**Image Element**
+- Use image-specific controls such as alt text, object-fit, focal point, dimensions, link, caption, and responsive behavior.
+
+### 4.2 Asset Library
+
+Provide a shared Asset Library for assets uploaded by the user or generated/imported through supported workflows.
+
+Asset categories may include:
+- Images and illustrations
+- Logos and brand marks
+- Icons and SVGs
+- Video and audio
+- Fonts
+- Documents and downloadable files
+- Other supported media
+
+Asset metadata:
+- Stable asset ID
+- File name and media type
+- File size and dimensions/duration where applicable
+- Original Drive file reference
+- Optional generated/derived variants
+- Alt text or accessible description where relevant
+- Source/provenance and license information when known
+- Created/updated timestamps
+- Optional tags/folders
+
+Storage rules:
+- Canonical originals remain in the user's Google Drive.
+- The Builder may maintain temporary or derived delivery copies according to the existing publishing architecture.
+- Any R2 copy is a derived delivery artifact, not the canonical user-owned source.
+- Never store portfolio assets or their metadata in Supabase.
+- Validate file type using content inspection, not filename extension alone.
+- Apply file-size limits, SVG sanitization, and safe media handling.
+- Do not execute uploaded files as code.
+
+### 4.3 Agent-assisted asset workflow
+
+The product may provide an Agent-assisted workflow to search for, generate, prepare, and insert assets.
+
+Supported workflow:
+1. User describes the asset or selects an asset type.
+2. Agent searches approved sources or generates an original asset using an available generation capability.
+3. Agent presents candidate assets with preview and provenance/license information where available.
+4. User approves the candidate.
+5. System validates file type, dimensions, size, and safety.
+6. Asset is saved to the user's Drive-backed Asset Library.
+7. User inserts it into the selected element or saves it into a component/template.
+
+Important rules:
+- Do not silently replace an existing logo or brand asset.
+- Do not imply that a third-party asset is licensed when license status is unknown.
+- Record source and license metadata when available.
+- Require user approval before inserting generated or externally sourced assets into the page.
+- For SVG, sanitize active content, external references, scripts, event handlers, and unsafe URL schemes.
+- Agent-generated code or SVG must be treated as untrusted input and validated.
+
+---
+
+## 5. Component and Template Library
+
+### 5.1 Library organization
+
+Provide a dedicated library surface accessible from the Builder, with at least:
+
+- Built-in Elements
+- Built-in Components
+- Built-in Section Templates
+- Built-in Header Templates
+- Built-in Footer Templates
+- Built-in Page Templates
+- My Components
+- My Section Templates
+- My Header Templates
+- My Footer Templates
+- My Page Templates
+- Recently Used and Favorites
+
+The user must be able to search, preview, insert, duplicate, rename, categorize, and delete their own saved items, subject to dependency checks.
+
+### 5.2 Save actions
+
+When one or more nodes are selected on the Canvas, offer context-appropriate actions:
+
+- Save as Component
+- Save as Section Template
+- Save as Header Template (when the selection is intended as a header)
+- Save as Footer Template (when the selection is intended as a footer)
+- Save as Page Template (page-level action)
+- Duplicate
+- Copy / Paste
+
+The save flow should request only essential metadata: name, optional description, and category/tags. The system should infer the template type from the selected save action rather than asking the user to choose it again.
+
+### 5.3 Insert and edit semantics
+
+- Inserting a template creates an editable instance in the target page.
+- A normal inserted template is independent from its saved source after insertion unless the user explicitly chooses a linked/synchronized component mode.
+- A reusable Component may support linked instances, but the UI must clearly identify linked behavior and the scope of edits.
+- Provide an explicit Detach/Convert to Local action for linked instances.
+- Do not silently propagate edits from a saved template to existing pages.
+- Deleting a saved template must not delete already inserted independent instances.
+- Warn before deleting a component definition that is still referenced by linked instances.
+
+### 5.4 Versioning and compatibility
+
+Each saved component/template should include:
+- Stable ID
+- Type
+- Name and description
+- Schema version
+- Builder engine compatibility/version
+- Responsive settings
+- Theme-token references and local overrides
+- Component tree/document payload
+- Created/updated timestamps
+- Optional revision history
+
+Versioning requirements:
+- Saving changes to a reusable definition creates a new revision or updates it according to the documented revision policy.
+- Existing linked instances must have predictable update behavior.
+- Provide a review/preview step before applying a newer component revision to existing linked instances.
+- Migrations must preserve unknown or unsupported properties where feasible.
+- Do not use exported HTML as the editable source of truth; retain the native Builder document/component representation.
+
+---
+
+## 6. Global and Local Header/Footer System
+
+### 6.1 Page-level modes
+
+Each page must independently configure Header and Footer modes:
+
+| Mode | Behavior |
+|---|---|
+| Global | Render the site's selected shared Header/Footer |
+| Local | Render a page-specific Header/Footer component |
+| None | Render no Header/Footer in that position |
+
+Header and Footer are configured independently. A page may use Global Header with Local Footer, Local Header with None Footer, and so on.
+
+### 6.2 Site-level settings
+
+Add a Site Layout / Global Components area in Site Settings with:
+- Global Header definition/selection.
+- Global Footer definition/selection.
+- Ability to maintain multiple saved Header/Footer designs.
+- Explicit selection of which design is currently active as the site's global default.
+- Preview at Desktop, Tablet, and Mobile.
+- Save and publish status consistent with the existing Save/Publish model.
+
+The system may support multiple named global variants (e.g. Main Header, Minimal Header, Transparent Header), but each page's Global mode must resolve to a deterministic selected variant. Do not infer a variant from page name.
+
+### 6.3 Page Management integration
+
+Add Header and Footer settings to each page's settings surface.
+
+Recommended controls:
+
+- Header: Global / Local / None
+- Footer: Global / Local / None
+- If Global: show the selected global variant and provide a shortcut to manage it.
+- If Local: show the page-specific component and actions to create, edit, replace, detach, or save as a template.
+- If None: show a clear empty state and an action to enable one.
+
+Default behavior for newly created pages:
+- Inherit the site's configured Global Header and Global Footer by default.
+- Allow the user to change either setting independently.
+- Page templates may define an initial choice, but applying a page template must show whether it will change the page's Header/Footer modes.
+
+### 6.4 Local Header/Footer creation
+
+A Local Header/Footer may be:
+- Created from blank.
+- Created from a built-in Header/Footer template.
+- Created by copying the current Global Header/Footer.
+- Created from one of the user's saved Header/Footer templates.
+
+Copying Global to Local must create an independent local definition. It must not remain linked unless the user explicitly selects a linked mode.
+
+A Local Header/Footer may be saved as a reusable Header/Footer Template at any time.
+
+### 6.5 Editing and propagation rules
+
+| User action | Expected result |
+|---|---|
+| Edit Global Header | Affects all pages currently configured to use that Global Header after the next successful publish |
+| Edit Local Header on Page A | Affects Page A only |
+| Change Page A from Global to Local by copying | Creates independent local copy; other pages unchanged |
+| Change Page A from Global to None | Header removed from Page A only |
+| Replace Page A Local Header with a saved template | Page A uses a new independent instance unless linked behavior is explicitly selected |
+| Edit a saved template | Does not silently modify existing independent instances |
+| Update a linked component revision | Requires clear preview/confirmation and affects only linked instances selected for update |
+
+Apply the same rules to Footer.
+
+### 6.6 Canvas representation
+
+The editor must visually distinguish:
+- Global Header region
+- Local Header region
+- Page content region
+- Local Footer region
+- Global Footer region
+
+Provide clear labels or badges in the editor, but do not make the published site show editor-only labels.
+
+When a Global component is selected from a page canvas, make it clear that editing it changes the shared global definition. Offer a shortcut to open the Global Component editor.
+
+### 6.7 Publishing behavior
+
+Publishing is site-wide and atomic, consistent with the existing publishing specification.
+
+- Save persists source documents and component definitions to the user's Google Drive.
+- Publish/Update builds all affected routes and shared components from the latest saved source.
+- Global Header/Footer changes must be included in every page that references the affected global definition.
+- Local Header/Footer changes affect only the owning page.
+- Build and validate the complete site output before activation.
+- Activate the new immutable build only after all required pages and assets succeed.
+- Failed build preserves the previously active site version.
+- Rollback restores a prior successful build and its matching shared/local layout output.
+- Do not partially activate a site where some pages use new global components and others use old ones.
+
+---
+
+## 7. Responsive behavior
+
+All Elements, Components, Templates, Headers, and Footers must use the existing Desktop / Tablet / Mobile responsive property model.
+
+Requirements:
+- One canonical component document with breakpoint-specific property overrides.
+- Device preview does not create separate page/component copies.
+- Explicit overrides inherit from larger breakpoints according to the existing responsive specification.
+- Provide reset-to-inherited behavior.
+- Header navigation must support mobile interaction patterns (e.g. menu toggle/drawer) without requiring hover.
+- Touch targets, keyboard navigation, focus management, and accessible names are required.
+- Local and Global Header/Footer must be previewable at all supported breakpoints.
+- Template previews should expose device previews when responsive layout materially changes.
+
+---
+
+## 8. UX flows
+
+### 8.1 Insert an Element
+1. Open Elements.
+2. Search or browse a category.
+3. Select an element.
+4. Choose insertion target or drag it to a valid Canvas location.
+5. Element appears selected and editable in the property panel.
+
+### 8.2 Save selection as a Component/Template
+1. Select one or more Canvas nodes.
+2. Open Save as.
+3. Choose the applicable type (Component, Section, Header, or Footer Template).
+4. Enter name and optional description/tags.
+5. Save to My Library.
+6. Confirm the item is available in the relevant library category.
+
+### 8.3 Create a Local Header from Global
+1. Open Page Settings.
+2. Set Header to Local.
+3. Choose Copy current Global Header.
+4. System creates an independent local component.
+5. User edits it without affecting other pages.
+6. Optionally save it as a Header Template.
+
+### 8.4 Set a page to Global Header/Footer
+1. Open Page Settings.
+2. Set Header or Footer to Global.
+3. System resolves the currently active global variant.
+4. Editor shows a shared/global indicator.
+5. Changes to that global definition are reflected on all pages using it after successful publish.
+
+### 8.5 Agent-assisted asset insertion
+1. User asks Agent to find or create an asset.
+2. Agent presents candidates and source/license context.
+3. User selects one.
+4. System validates and saves it to Drive-backed Asset Library.
+5. User inserts it into the current selection or Canvas.
+6. Undo removes the insertion without deleting the saved asset unless the user separately deletes it.
+
+---
+
+## 9. Data model proposal
+
+The following is a logical model, not a requirement to use a relational database. Persist canonical portfolio structures in the user's Google Drive according to the established storage architecture.
+
+### 9.1 Site manifest (illustrative)
+
+```json
+{
+  "schemaVersion": 1,
+  "siteId": "stable-site-id",
+  "globalComponents": {
+    "headers": {
+      "activeId": "header-main"
+    },
+    "footers": {
+      "activeId": "footer-main"
+    }
+  },
+  "pages": [
+    {
+      "pageId": "page-home",
+      "path": "/",
+      "layout": {
+        "header": {
+          "mode": "global",
+          "localComponentId": null,
+          "globalComponentId": null
+        },
+        "footer": {
+          "mode": "global",
+          "localComponentId": null,
+          "globalComponentId": null
+        }
+      }
+    }
+  ]
+}
+```
+
+For Global mode, `globalComponentId` may be omitted if the site-level active selection is authoritative. Choose one representation and enforce it consistently; avoid storing conflicting active IDs in both site and page records.
+
+### 9.2 Component definition (illustrative)
+
+```json
+{
+  "schemaVersion": 1,
+  "componentId": "header-main",
+  "componentType": "header",
+  "name": "Main Header",
+  "revision": 1,
+  "engineVersion": "compatible-engine-version",
+  "document": {},
+  "responsive": {},
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601"
+}
+```
+
+### 9.3 Page layout model
+
+```ts
+type LayoutMode = "global" | "local" | "none";
+
+type PageLayoutSlot = {
+  mode: LayoutMode;
+  localComponentId?: string | null;
+};
+
+type PageLayout = {
+  header: PageLayoutSlot;
+  footer: PageLayoutSlot;
+};
+```
+
+Validation rules:
+- `mode = "local"` requires a valid local component reference.
+- `mode = "global"` resolves to a valid active global component.
+- `mode = "none"` must not render a component.
+- Missing or invalid references must produce a validation error before publish.
+- Header slot accepts Header components only; Footer slot accepts Footer components only.
+- A page cannot reference itself or create recursive component inclusion.
+- Stable IDs, not file names or Drive row positions, are permanent identifiers.
+
+---
+
+## 10. Google Drive storage proposal
+
+Illustrative structure:
+
+```text
+My Portfolio/
+├── Data/
+│   └── portfolio-data (Google Sheets)
+└── Website/
+    ├── Site/
+    │   └── site-manifest.json
+    ├── Pages/
+    │   ├── page-home.json
+    │   └── page-about.json
+    ├── Components/
+    │   ├── Global/
+    │   │   ├── Headers/
+    │   │   └── Footers/
+    │   ├── Local/
+    │   │   └── {page-id}/
+    │   └── Shared/
+    ├── Templates/
+    │   ├── Components/
+    │   ├── Sections/
+    │   ├── Headers/
+    │   ├── Footers/
+    │   ├── Pages/
+    │   └── Sites/
+    ├── Assets/
+    │   ├── Images/
+    │   ├── Logos/
+    │   ├── Icons/
+    │   ├── Illustrations/
+    │   ├── Fonts/
+    │   └── Other/
+    └── Published/
+        └── {immutable-build-id}/
+```
+
+This is a logical organization. Implementation may use Drive file metadata/appProperties and a manifest to avoid excessive folder traversal. Batch operations and caching are required to respect Google API quotas and latency.
+
+Supabase must not store these records or their metadata.
+
+---
+
+## 11. Security, privacy, and licensing
+
+- Treat custom HTML, CSS, JavaScript, SVG, Lottie, and third-party embeds as untrusted input.
+- Keep public tenant rendering isolated from the authenticated Builder origin.
+- Public content must never access Supabase credentials, Google OAuth tokens, refresh tokens, admin cookies, or platform secrets.
+- Sanitize SVG and HTML; validate URLs and embed origins.
+- Apply CSP and sandbox policies appropriate to the existing threat model.
+- Do not execute Agent-generated code in the privileged Builder context.
+- Store Google OAuth refresh tokens only in the designated encrypted credential vault, not in portfolio files or general Supabase tables.
+- Record provenance/license metadata for imported assets when available.
+- Provide a user-facing warning when license terms are unknown.
+
+---
+
+## 12. Error handling and recovery
+
+Required cases:
+- Element registry fails to load: show recoverable error and retry.
+- Search returns no results: show clear empty state and reset filters.
+- Invalid drop target: reject insertion without corrupting the document.
+- Asset upload fails: preserve current Canvas state and allow retry.
+- SVG fails validation: reject with actionable reason.
+- Template is incompatible: explain incompatibility and offer safe migration where possible.
+- Local component reference is missing: show page-level repair action and block publish.
+- Global Header/Footer is not configured: show site-level setup action and block publish only if a page requires it.
+- Build fails: preserve previous active published version.
+- Google Drive quota/network failure: preserve unsaved local editor state and provide retry/recovery messaging.
+
+---
+
+## 13. Acceptance criteria
+
+### Element Library
+- [ ] User can find supported elements by search and category.
+- [ ] Each element has a recognizable icon and accessible text label.
+- [ ] User can insert by drag-and-drop and click.
+- [ ] Invalid nesting is prevented with clear feedback.
+- [ ] Recently Used and Favorites work consistently.
+- [ ] Panel works on Desktop, Tablet, and Mobile.
+
+### Icon, Logo, and Assets
+- [ ] Icon, Logo, and Image are distinct element types.
+- [ ] User can search/select icons from supported libraries.
+- [ ] User can upload and reuse logos from Asset Library.
+- [ ] SVG is sanitized before use.
+- [ ] Asset source/license metadata is retained when available.
+- [ ] Agent asset insertion requires user approval.
+- [ ] Canonical assets remain in user-owned Google Drive.
+
+### Components and Templates
+- [ ] User can save a selection as a Component or applicable Template.
+- [ ] Saved items appear in the correct library.
+- [ ] Inserting a saved template creates an editable instance.
+- [ ] Independent instances do not silently change when the template changes.
+- [ ] Linked component behavior is explicit and supports detach.
+- [ ] Version/compatibility metadata is persisted.
+
+### Header and Footer
+- [ ] Each page can independently select Global, Local, or None for Header.
+- [ ] Each page can independently select Global, Local, or None for Footer.
+- [ ] New pages default to the site's configured Global layout.
+- [ ] Local copy from Global is independent.
+- [ ] Editing Local affects only its page.
+- [ ] Editing Global affects all pages referencing that Global component after successful publish.
+- [ ] Header/Footer can be saved as reusable templates.
+- [ ] Responsive previews work at Desktop, Tablet, and Mobile.
+- [ ] Publishing is atomic across all affected pages.
+- [ ] Failed publish preserves the previous live site.
+
+### Data and Security
+- [ ] Portfolio data, component definitions, templates, and asset metadata are not stored in Supabase.
+- [ ] Canonical source files are stored in user-owned Google Drive.
+- [ ] Public rendering cannot access Builder credentials or OAuth tokens.
+- [ ] Build validates missing component/asset references before activation.
+
+---
+
+## 14. Implementation plan
+
+Implement in dependency order, with production-quality validation at each stage.
+
+| Phase | Scope | Exit condition |
+|---|---|---|
+| 1. Registry foundation | Element registry, metadata schema, icon mapping, nesting rules | Registry-driven panel works for existing elements |
+| 2. Expanded catalog | Add catalog groups and core elements | Required categories are usable and tested |
+| 3. Asset foundation | Drive-backed Asset Library, upload validation, icon/logo elements | Assets can be safely uploaded, selected, and reused |
+| 4. Save/reuse system | Component save, template types, library UI, version metadata | User can save, browse, preview, and insert editable templates |
+| 5. Header/Footer foundation | Global component definitions and page layout modes | Global/Local/None works for both slots |
+| 6. Editor integration | Canvas labels, Page Settings, responsive editing | UX is clear across devices |
+| 7. Publishing integration | Dependency validation, coherent build, atomic activation | No partial site activation; rollback works |
+| 8. Agent asset workflow | Search/generate/approve/validate/insert | Agent workflow is safe, auditable, and recoverable |
+
+Do not start with a large number of decorative elements before the registry, schema, asset handling, and publishing contracts are stable.
+
+---
+
+## 15. Recommended initial engineering backlog
+
+| ID | Work item | Priority |
+|---|---|---|
+| ELEM-001 | Define Element Registry schema and stable IDs | Required |
+| ELEM-002 | Convert Element Panel to registry-driven rendering | Required |
+| ELEM-003 | Add category/search/favorites/recently-used behavior | Required |
+| ELEM-004 | Add keyboard and click-to-insert support | Required |
+| ELEM-005 | Add catalog coverage for core layout/basic/media/navigation/forms/portfolio | Required |
+| ASSET-001 | Define Drive-backed Asset metadata and folder/manifest strategy | Required |
+| ASSET-002 | Implement safe upload and media validation | Required |
+| ASSET-003 | Add Icon Element and supported icon registry | Required |
+| ASSET-004 | Add Logo Element and variants | Required |
+| ASSET-005 | Add SVG sanitization and asset provenance fields | Required |
+| TMPL-001 | Define common Component/Template document schema | Required |
+| TMPL-002 | Implement Save Selection as Component/Template | Required |
+| TMPL-003 | Implement My Library browse/search/preview/insert | Required |
+| TMPL-004 | Implement revision metadata and detach semantics | Required |
+| LAYOUT-001 | Define Global Header/Footer component registry | Required |
+| LAYOUT-002 | Add per-page Global/Local/None layout slots | Required |
+| LAYOUT-003 | Implement Local copy/detach from Global | Required |
+| LAYOUT-004 | Add Header/Footer template save and insert | Required |
+| LAYOUT-005 | Integrate page layout dependencies into site build validation | Required |
+| LAYOUT-006 | Ensure atomic publish and rollback include shared layout output | Required |
+| AGENT-001 | Define Agent asset search/generation approval workflow | Planned |
+| AGENT-002 | Implement provenance/license and validation feedback | Planned |
+
+---
+
+## 16. Decisions to lock before implementation
+
+The following choices should be resolved during technical design or a focused proof of concept:
+
+1. Exact icon libraries and their licenses.
+2. Whether linked reusable Components are included in the first implementation or all inserted instances are independent initially.
+3. Revision policy for Global Components and linked instances.
+4. Whether Header/Footer templates can include dynamic collection content.
+5. Exact SVG sanitization library and accepted SVG feature subset.
+6. Asset size/type limits and generated image variants.
+7. Agent search providers and license/provenance requirements.
+8. Whether multiple Global Header/Footer variants are supported at launch or one active variant per slot.
+
+Recommended defaults:
+- Start with one active Global Header and one active Global Footer, while allowing multiple saved templates.
+- Make template insertion independent by default.
+- Introduce linked reusable instances only with explicit UI and version-update controls.
+- Use a curated icon library with verified licensing.
+- Require approval before Agent inserts an asset.
+- Keep all canonical portfolio data and assets in user-owned Google Drive.
+
+---
+
+## 17. Definition of Done
+
+This change is complete only when:
+- The Element Library is registry-driven, searchable, accessible, and covers the required categories.
+- Icon, Logo, and Image workflows are distinct and usable.
+- Users can save and reuse editable Components and Templates.
+- Header/Footer can be configured independently per page as Global, Local, or None.
+- Global and Local edit propagation matches the documented rules.
+- All features work across Desktop, Tablet, and Mobile.
+- Save, Publish, Update, Unpublish, and Rollback semantics remain consistent with the existing architecture.
+- Publishing validates all page/component/asset dependencies and activates atomically.
+- Canonical source data remains in the user's Google Workspace; Supabase remains Authentication-only.
+- Security, failure recovery, and acceptance tests pass.

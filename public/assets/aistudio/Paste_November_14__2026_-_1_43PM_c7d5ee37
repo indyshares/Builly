@@ -1,0 +1,659 @@
+# FULL_CSS_PROPERTY_EDITOR_SPEC.md
+
+## IndyShares Portfolio Builder — Full CSS Property Editor
+
+**Document type:** Supplemental Product / UX / Technical Specification  
+**Version:** 1.0  
+**Status:** Proposed implementation baseline  
+**Scope:** Comprehensive visual CSS Property Editor for Layout, Flexbox, Grid, Alignment, Sizing, Spacing, Typography, Background, Border, Effects, Overflow, Positioning, Transform, Transition, Animation, Responsive Values, and Custom CSS.  
+**Relationship:** Additive to existing IndyShares documents. Align with Builder, Responsive Editor, Theme System, Page Management, Google Workspace Integration, and User-Owned Data Architecture. Does not replace prior files.
+
+---
+
+## 1. Purpose
+
+The current Property Panel appears to expose Text Alignment but does not make the broader CSS layout and item-alignment capabilities discoverable. IndyShares is a freeform visual website builder, so users need practical control over the CSS properties commonly used to build real websites.
+
+This specification defines a unified Property Editor that:
+- Separates Text Alignment, Content Alignment, and Item Alignment.
+- Provides real controls for Block, Flexbox, and CSS Grid.
+- Exposes a broad set of commonly used CSS properties.
+- Shows controls relevant to the selected element and its parent layout.
+- Supports Desktop, Tablet, and Mobile responsive values.
+- Persists values in Builder documents and produces matching published CSS.
+- Supports advanced Custom CSS without overwhelming ordinary users.
+
+This is a visual property editor, not a requirement to expose every CSS property through a dedicated graphical control. Advanced or uncommon CSS remains possible through a safe Custom CSS editor.
+
+## 2. Product Principles
+
+1. Every visible control maps to a real CSS property or a clearly defined Builder behavior.
+2. No fake controls: a control is functional only when it changes canvas, saved source, and published output.
+3. Controls are context-aware to element type, parent layout, display mode, and breakpoint.
+4. Text alignment, container content alignment, and individual item alignment are distinct.
+5. Common controls are easy to find; advanced controls use progressive disclosure.
+6. Responsive inheritance and overrides are explicit and predictable.
+7. Theme tokens coexist with component and element overrides.
+8. Save, reload, undo/redo, and publish preserve styling (round-trip fidelity).
+9. Mouse, touch, keyboard, and assistive technology are supported.
+10. Keep a normalized IndyShares style model and isolate engine-specific mapping in an adapter where practical.
+
+---
+
+## 3. Property Panel Information Architecture
+
+Recommended tabs:
+
+### Content
+Element-specific content and data: text, labels, links, images, icons, media, form fields, and component-specific settings.
+
+### Style
+1. Layout
+2. Alignment
+3. Sizing
+4. Spacing
+5. Typography
+6. Background
+7. Border & Outline
+8. Effects
+9. Overflow
+10. Context-specific media/list/table controls
+
+### Responsive
+- Breakpoint selector.
+- Inheritance status and override/reset controls.
+- Device preview shortcuts.
+- Responsive visibility and layout controls.
+
+### Advanced
+- Positioning.
+- Transform.
+- Transition.
+- Animation.
+- Custom CSS.
+- CSS variables/custom properties.
+- Supported HTML attributes and advanced element settings.
+- Pseudo-state styling where supported.
+
+The existing tab names may be retained, but these responsibilities must remain distinct.
+
+---
+
+## 4. Alignment System — Required Distinctions
+
+Alignment is a first-class section, not a single Text Align control.
+
+### 4.1 Text Alignment
+
+| UI control | CSS mapping | Values |
+|---|---|---|
+| Text Align | `text-align` | start, end, left, right, center, justify |
+| Text Align Last | `text-align-last` | auto, start, end, left, right, center, justify |
+| Vertical Align | `vertical-align` | baseline, sub, super, text-top, text-bottom, middle, top, bottom, length |
+| Direction | `direction` | ltr, rtl |
+| Writing Mode | `writing-mode` | horizontal-tb, vertical-rl, vertical-lr |
+
+Show advanced text-flow controls only where applicable.
+
+### 4.2 Flex Container Content Alignment
+
+| UI control | CSS mapping | Purpose |
+|---|---|---|
+| Direction | `flex-direction` | Main-axis direction |
+| Wrap | `flex-wrap` | Single/multiple flex lines |
+| Justify Content | `justify-content` | Distribution on main axis |
+| Align Items | `align-items` | Default cross-axis alignment for children |
+| Align Content | `align-content` | Distribution of multiple flex lines |
+| Gap | `gap` | Space between rows/columns |
+| Row Gap | `row-gap` | Vertical line spacing |
+| Column Gap | `column-gap` | Horizontal item spacing |
+
+Required values:
+- `justify-content`: normal, start, end, flex-start, flex-end, center, left, right, space-between, space-around, space-evenly (and stretch only where valid).
+- `align-items`: normal, stretch, center, start, end, self-start, self-end, flex-start, flex-end, baseline, first baseline, last baseline.
+- `align-content`: normal, start, end, center, stretch, space-between, space-around, space-evenly, flex-start, flex-end, baseline where supported.
+- `flex-direction`: row, row-reverse, column, column-reverse.
+- `flex-wrap`: nowrap, wrap, wrap-reverse.
+
+Explain Main Axis and Cross Axis, and update the helper when Direction changes.
+
+### 4.3 Flex Item Alignment
+
+| UI control | CSS mapping | Values |
+|---|---|---|
+| Align Self | `align-self` | auto, normal, stretch, center, start, end, self-start, self-end, flex-start, flex-end, baseline |
+| Order | `order` | integer |
+| Flex Grow | `flex-grow` | non-negative number |
+| Flex Shrink | `flex-shrink` | non-negative number |
+| Flex Basis | `flex-basis` | auto, content, length, percentage |
+| Flex shorthand | `flex` | validated shorthand/presets |
+
+Do not expose a misleading Flex `Justify Self` control: it does not align Flex items in the same way as Grid item self-alignment.
+
+### 4.4 Grid Container Alignment
+
+| UI control | CSS mapping | Purpose |
+|---|---|---|
+| Justify Items | `justify-items` | Inline-axis alignment inside grid cells |
+| Align Items | `align-items` | Block-axis alignment inside grid cells |
+| Place Items | `place-items` | align-items + justify-items shorthand |
+| Justify Content | `justify-content` | Grid tracks along inline axis |
+| Align Content | `align-content` | Grid tracks along block axis |
+| Place Content | `place-content` | align-content + justify-content shorthand |
+| Gap / Row Gap / Column Gap | `gap`, `row-gap`, `column-gap` | Track spacing |
+
+Grid-specific controls:
+- `grid-template-columns`, `grid-template-rows`, `grid-template-areas`.
+- `grid-auto-flow`, `grid-auto-columns`, `grid-auto-rows`.
+- `grid-column`, `grid-row`, `grid-column-start/end`, `grid-row-start/end`.
+- Item `justify-self`, `align-self`, `place-self`.
+
+Provide a practical track editor supporting fixed, fractional (`fr`), `repeat()`, and `minmax()` values where feasible, plus raw CSS value mode. Do not limit users to a fixed number of columns.
+
+### 4.5 Block / Normal Flow Alignment
+
+Do not imply that `justify-content` or `align-items` controls ordinary block children. Provide applicable controls such as:
+- Width/max-width and `margin-inline: auto` for common centered containers.
+- Text alignment for text.
+- Convert container to Flex or Grid to align child elements as a group.
+- Positioning only when intentionally selected.
+
+Show a hint: “To align child elements as a group, change Display to Flex or Grid.”
+
+### 4.6 Alignment UX
+
+- Show visual diagrams for Flex main/cross axes and Grid cell alignment.
+- Label controls with user-facing names and CSS property hints where useful.
+- Provide start/center/end/stretch/baseline presets.
+- Keep raw value entry for valid advanced values.
+- Hide or disable inapplicable controls with an explanation; never silently accept a no-op.
+- Reset individual properties and the Alignment group.
+- Support logical `start`/`end` values and document browser compatibility.
+
+---
+
+## 5. Layout
+
+### Display
+Support `display`: block, inline, inline-block, flex, inline-flex, grid, inline-grid, flow-root, none. Add other values only if the engine and output pipeline support them safely. When setting `display:none`, warn and provide a way to reselect the hidden element through Navigator.
+
+### Flexbox
+Expose Direction, Wrap, Justify Content, Align Items, Align Content, Gap/Row Gap/Column Gap, and child Flex Grow/Shrink/Basis/Order/Align Self.
+
+### Grid
+Expose template columns/rows/areas, auto columns/rows/flow, row/column gap, container alignment, item placement, and self-alignment.
+
+### Other layout
+- `box-sizing`: content-box, border-box.
+- `aspect-ratio`.
+- Multi-column properties (`columns`, `column-count`, `column-width`, `column-rule`) as advanced controls where practical.
+- `contain` and `content-visibility` only in Advanced with clear behavior/performance warnings.
+
+---
+
+## 6. Sizing
+
+Support:
+- Width, height, min-width, min-height, max-width, max-height.
+- Aspect ratio.
+- Logical inline-size/block-size and min/max equivalents in Advanced.
+- Fit presets: auto, min-content, max-content, fit-content, stretch where valid.
+- Units: px, %, rem, em, vw, vh, svw, svh, lvh, dvh, ch; `fr` only in relevant Grid fields.
+- CSS expressions: `calc()`, `min()`, `max()`, `clamp()`.
+
+Provide numeric input plus unit selector, valid raw CSS entry, Auto/Fit/Fill presets where appropriate, and distinguish authored from computed values where feasible.
+
+## 7. Spacing
+
+Support:
+- Margin and padding for all four sides.
+- Margin/padding shorthand.
+- Logical margin/padding inline and block properties.
+- Gap, row-gap, column-gap.
+- Auto margins.
+- Negative margins where valid; never negative padding.
+- Linked/unlinked side controls.
+
+Provide a Box Model visual editor showing Content, Padding, Border, and Margin. Clicking a side focuses its input. Support units and CSS expressions.
+
+## 8. Typography
+
+Support:
+- `font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`.
+- `line-height`, `letter-spacing`, `word-spacing`.
+- `text-align`, `text-align-last`, `text-indent`, `text-transform`.
+- `text-decoration-line/style/color/thickness`, `text-underline-offset`.
+- `text-shadow`, `white-space`, `overflow-wrap`, `word-break`, `hyphens`.
+- `line-clamp` where supported.
+- `direction`, `writing-mode` in Advanced.
+- `color`, `vertical-align` in applicable contexts.
+
+Integrate active site theme typography tokens. Distinguish Theme Token, inherited value, and local override. Provide Reset to Theme Token.
+
+## 9. Background
+
+Support:
+- Background color and image.
+- Multiple background layers where supported.
+- Image position, size (auto/cover/contain/custom), repeat, attachment (with mobile caveats), origin and clip.
+- Background blend mode.
+- Linear, radial, and conic gradients with editable color stops.
+- Overlay convenience controls only if they compile to inspectable CSS or a documented generated pseudo-element.
+
+Asset selection uses the user's approved media storage workflow. Do not expose private Drive IDs in public output.
+
+## 10. Border and Outline
+
+Support:
+- Border side width/style/color and shorthand.
+- Border radius per corner and linked radius.
+- Logical border properties in Advanced.
+- Outline width/style/color/offset.
+- Divider styling for applicable elements.
+- `border-image` in Advanced if supported.
+
+Provide common presets but preserve arbitrary valid values.
+
+## 11. Effects and Filters
+
+Support:
+- Box shadow with multiple layers.
+- Text shadow.
+- Opacity.
+- Filters: blur, brightness, contrast, grayscale, hue-rotate, invert, saturate, sepia, drop-shadow.
+- Backdrop filter where supported.
+- Mix-blend-mode, background-blend-mode, isolation.
+- Clip-path presets and raw CSS value mode.
+- Mask properties in Advanced if supported.
+
+Warn about expensive filters, especially on mobile.
+
+## 12. Overflow and Scroll
+
+Support:
+- `overflow`, `overflow-x`, `overflow-y`: visible, hidden, clip, scroll, auto.
+- `overscroll-behavior`, `scroll-behavior`.
+- `scroll-snap-type`, `scroll-snap-align`, `scroll-snap-stop` in Advanced.
+- `resize` for applicable elements.
+- `object-fit`, `object-position` for image/video.
+- `aspect-ratio` for media sizing.
+
+Distinguish clipping from scrolling in UI copy.
+
+## 13. Positioning and Stacking
+
+Support:
+- `position`: static, relative, absolute, fixed, sticky.
+- Top/right/bottom/left and inset shorthand.
+- Logical inset properties in Advanced.
+- `z-index`.
+- Isolation/stacking-context guidance.
+- Sticky offsets.
+- Anchor positioning only after browser and engine support validation.
+
+Show a visual offset editor. Explain that Absolute positioning is relative to the nearest positioned ancestor and can affect responsiveness. Do not silently set a parent to relative without informing the user.
+
+## 14. Transform
+
+Support:
+- Translate X/Y/Z.
+- Rotate.
+- Scale X/Y.
+- Skew X/Y.
+- Transform origin.
+- Transform box where supported.
+- 2D/3D mode and perspective in Advanced.
+
+Use visual controls plus numeric inputs. Preserve raw transform values when loading external documents.
+
+## 15. Transition and Animation
+
+### Transition
+Support transition property, duration, delay, timing-function presets, custom cubic-bezier, and multiple declarations where practical.
+
+### Animation
+Support animation name/keyframe selection, duration, delay, timing function, iteration count, direction, fill mode, play state, and reduced-motion behavior.
+
+Provide a keyframe editor only if keyframes can be persisted and compiled reliably. Otherwise support CSS keyframes through Advanced Custom CSS and label the limitation. Respect `prefers-reduced-motion`; do not animate essential content by default.
+
+## 16. Responsive Property Model
+
+Use the project's canonical breakpoint definitions. At minimum support Desktop, Tablet, and Mobile. Custom breakpoints may be added only when style schema, preview, and publishing compiler support them consistently.
+
+Recommended cascade:
+1. Base/Desktop authored value.
+2. Tablet override when defined.
+3. Mobile override when defined.
+4. Browser default when no authored or inherited value applies.
+
+Document the exact media-query strategy. For each property:
+- Show inherited versus explicit override.
+- Provide Reset to Inherited, Copy from Breakpoint, and Clear Override.
+- Switching device preview must not create an override.
+- Keep authored values distinct from computed browser values.
+
+Responsive editing must cover Layout, Flex/Grid, Alignment, Sizing, Spacing, Typography, Background positioning, Positioning/Visibility where supported, Order, and Grid placement.
+
+Device preview is viewport simulation, not a separate page or element copy.
+
+## 17. Theme Tokens and Cascade
+
+Support Global Theme Tokens, shared component styles, element overrides, and responsive overrides.
+
+Recommended precedence:
+1. Element breakpoint override.
+2. Element base override.
+3. Component style.
+4. Site theme token/style.
+5. Builder/browser default.
+
+Generated CSS must match this model without accidental specificity escalation.
+
+For token-backed values:
+- Display token name and resolved value.
+- Allow detach/local override.
+- Provide Reset to Theme Token.
+- Theme changes update linked elements.
+- Local overrides remain until reset.
+
+## 18. Custom CSS and Advanced Values
+
+Custom CSS scopes:
+- Element.
+- Page.
+- Site/global.
+
+Requirements:
+- Scope is visible and explicit.
+- Validate syntax where practical; show diagnostics.
+- Do not silently discard unsupported rules.
+- Prevent leakage into IndyShares admin/editor UI.
+- Scope published output to the user's public site.
+- Preserve unknown declarations through load/save.
+- Never expose Google tokens or platform secrets to custom code.
+
+Raw values should support valid `calc()`, `min()`, `max()`, `clamp()`, `var(--token)`, Grid `minmax()`/`repeat()`, and modern color functions where browser support is acceptable. `!important` belongs only in an explicit advanced workflow with a warning.
+
+Do not parse valid CSS into a lossy simplified representation. Preserve values the visual editor cannot fully interpret and offer raw-value fallback.
+
+## 19. Pseudo-States and Selectors
+
+Where supported, provide Default, Hover, Focus, Focus-visible, Active, Visited (applicable links), and Disabled (applicable controls).
+
+Clearly show the state being edited. Editor selection/hover outlines must not be confused with published hover styles. Focus styling must remain accessible. Scope state CSS to the selected element/component. Pseudo-elements (`::before`, `::after`) may be supported in Advanced only if persistence and rendering are reliable.
+
+## 20. Property Applicability Rules
+
+The Property Editor must understand selected element type, parent display mode, container/item role, element category, breakpoint, theme-token linkage, and pseudo-state.
+
+Examples:
+- Flex container: Direction, Wrap, Justify Content, Align Items, Align Content, Gap.
+- Flex child: Align Self, Order, Grow, Shrink, Basis.
+- Grid container: tracks, auto flow, container alignment, gaps.
+- Grid child: row/column placement and self-alignment.
+- Image: Object Fit and Object Position.
+- Text: typography and text alignment.
+- Normal block: no misleading Flex/Grid controls until Display changes.
+
+If unsupported by the selected engine/element, explain why and preserve existing CSS when possible.
+
+---
+
+## 21. Property Schema and Engine Adapter
+
+Use a normalized style model independent of UI components and, where practical, the selected Builder engine.
+
+Illustrative model:
+
+```ts
+type ResponsiveStyleValue = {
+  base?: string | number | null;
+  tablet?: string | number | null;
+  mobile?: string | number | null;
+};
+
+type StyleDeclaration = {
+  property: string;
+  values: ResponsiveStyleValue;
+  source: "theme-token" | "component" | "element" | "custom";
+  tokenRef?: string;
+  important?: boolean;
+};
+
+type ElementStyleRecord = {
+  schemaVersion: number;
+  elementId: string;
+  declarations: StyleDeclaration[];
+  customCss?: {
+    element?: string;
+    page?: string;
+    site?: string;
+  };
+};
+```
+
+Illustrative only; adapt to the existing engine schema without losing round-trip fidelity.
+
+Suggested responsibilities:
+- `PropertyCatalog`: definitions, groups, applicability, units, allowed values.
+- `PropertyPanel`: UI rendering and interaction.
+- `StyleStateService`: authored values, inheritance, responsive overrides, dirty state.
+- `StyleValidator`: syntax/value validation and warnings.
+- `ThemeTokenResolver`: token resolution and reset.
+- `EngineStyleAdapter`: map normalized values to/from Builder engine.
+- `CssCompiler`: deterministic CSS for preview and publish.
+- `StyleMigrationService`: schema versioning and migration.
+
+Do not place CSS mapping logic separately inside every React control.
+
+## 22. CSS Compilation and Render Parity
+
+Canvas and published site must use the same style semantics.
+
+Requirements:
+- Deterministic CSS generation.
+- Stable class/selector strategy.
+- Responsive media queries from canonical breakpoints.
+- Consistent theme token output.
+- No duplicate/contradictory declarations from repeated edits.
+- Preserve unsupported/unknown declarations.
+- Predictable CSS order and specificity.
+- Validate generated CSS before activating a build.
+- Compare computed styles in preview and published output for critical properties.
+
+If the Builder uses an iframe canvas, apply updates to the correct canvas document and isolate them from admin UI styles.
+
+## 23. Interaction, History, and Persistence
+
+Every property change must:
+- Update canvas immediately.
+- Update selected element's authored style state.
+- Mark correct page/site scope dirty.
+- Create an undoable history transaction.
+- Persist on Save according to existing save model.
+- Survive reload/reopen.
+- Appear in published output after successful build.
+
+UX:
+- Debounce high-frequency inputs.
+- Group a slider/drag gesture into one sensible undo transaction.
+- Support keyboard entry and arrow-key adjustment.
+- Reset individual property, group, and responsive override.
+- Warn before discarding unsaved changes when switching pages/closing editor.
+- Do not write every keystroke to Google Drive; batch/debounce editor state and save revisions intentionally.
+
+Storage:
+- Element styles belong in page Builder documents in the user's Google Drive.
+- Shared theme tokens belong in the user's Drive-based site configuration.
+- Supabase must not store style data, page metadata, or Portfolio settings.
+
+## 24. Performance and Reliability
+
+- Use metadata-driven property catalog; lazy-load advanced groups if needed.
+- Avoid rerendering the whole canvas for unrelated control changes.
+- Batch style updates where supported.
+- Avoid excessive DOM reads/layout measurements during slider movement.
+- Avoid generating a new stylesheet/class on every keystroke if in-place updates are supported.
+- Validate large Custom CSS without blocking the editor.
+- Keep mobile/touch controls responsive.
+- Invalid CSS must not crash the editor or corrupt the document.
+
+## 25. Accessibility
+
+- Every control has a label and accessible name.
+- Icon-only buttons have accessible labels/tooltips.
+- Segmented controls/popovers support keyboard navigation.
+- Visible focus states and adequate contrast.
+- Numeric controls do not rely on color alone.
+- Touch targets are appropriate for mobile.
+- Provide non-drag alternatives for layout operations.
+- Explain Main Axis, Cross Axis, Grid Tracks, and Item Alignment in plain language.
+- Use progressive disclosure/search rather than displaying every advanced field at once.
+
+## 26. Responsive Property Editor UI
+
+**Desktop:** Persistent right sidebar, collapsible groups, alignment diagrams, box-model editor.
+
+**Tablet:** Wider drawer/panel; keep canvas and device controls accessible; avoid cramped multi-column numeric controls.
+
+**Mobile:** Focused full-height panel or suitable bottom sheet; touch-friendly controls; selected-element context remains visible; no hover-only controls; switching Canvas/Properties must preserve selection and unsaved state.
+
+---
+
+## 27. Acceptance Criteria
+
+### Alignment
+1. Text Alignment is separate from Flex Container Alignment.
+2. Flex container exposes Direction, Wrap, Justify Content, Align Items, Align Content, and Gap.
+3. Flex child exposes Align Self, Order, Grow, Shrink, and Basis.
+4. Grid container exposes track definitions, Auto Flow, Justify/Align Items, Justify/Align Content, Place Items/Content, and gaps.
+5. Grid child exposes row/column placement and Justify/Align/Place Self.
+6. Block layout does not show misleading Flex/Grid controls.
+7. Alignment changes update canvas and published CSS.
+
+### CSS coverage
+1. Common Layout, Sizing, Spacing, Typography, Background, Border, Effects, Overflow, Position, Transform, Transition, and Animation properties are supported.
+2. Unsupported/advanced values are preserved rather than silently removed.
+3. Raw CSS values support valid expressions and CSS variables.
+4. Custom CSS is scoped and isolated from the editor/admin origin.
+
+### Responsive and theme
+1. Desktop/Tablet/Mobile values work for supported property groups.
+2. Inheritance and explicit overrides are distinguishable.
+3. Device preview does not create duplicate elements/documents.
+4. Reset-to-inherited and Reset-to-Theme work correctly.
+
+### Data and publishing
+1. Save/reload preserves style declarations and unknown CSS values.
+2. Undo/redo works for property edits.
+3. Preview and published output match for supported properties.
+4. Failed CSS compilation does not replace the current live site.
+5. No style or page metadata is written to Supabase.
+
+### Usability
+1. Groups are discoverable and not overwhelming.
+2. Controls work on Desktop, Tablet, and Mobile.
+3. Essential operations do not require drag-and-drop.
+4. Keyboard and touch interactions are supported.
+
+---
+
+## 28. QA Test Plan
+
+1. Text Align on paragraph, heading, button, and link.
+2. Flex Direction and main/cross-axis explanation.
+3. All Justify Content values.
+4. Align Items/Align Content with one and multiple flex lines.
+5. Flex child Align Self, Order, Grow, Shrink, Basis.
+6. Grid tracks with fixed, `fr`, `repeat()`, and `minmax()`.
+7. Grid container alignment and child placement/self-alignment.
+8. Inapplicable controls hidden or explained.
+9. Box model linked/unlinked values and units.
+10. Sizing with px, %, rem, vw/vh, clamp(), calc().
+11. Typography and theme token inheritance/reset.
+12. Background images, gradients, and multiple layers.
+13. Borders, radius, outlines, multiple shadows.
+14. Filters, opacity, blend modes, overflow.
+15. Static/relative/absolute/fixed/sticky positioning and stacking.
+16. Transforms and custom cubic-bezier transitions.
+17. Animation and reduced-motion behavior.
+18. Desktop/Tablet/Mobile inheritance and overrides.
+19. Pseudo-states and focus accessibility.
+20. Custom CSS scope, syntax errors, unknown declaration preservation.
+21. Undo/Redo, Save, reload, and publish parity.
+22. Page switching with unsaved property edits.
+23. Concurrent editing/revision conflicts.
+24. Small phone, large phone, tablet portrait/landscape, desktop.
+25. Verify no property/style/page data is written to Supabase.
+
+---
+
+## 29. Supplemental Backlog
+
+IDs are additive; do not renumber existing backlog items.
+
+| ID | Work item | Priority |
+|---|---|---|
+| CSSPROP-001 | Audit current Property Panel and CSS capabilities against this catalog | Must |
+| CSSPROP-002 | Define normalized, versioned style declaration schema | Must |
+| CSSPROP-003 | Implement metadata-driven Property Catalog and applicability rules | Must |
+| CSSPROP-004 | Separate Text, Flex Container, Flex Item, Grid Container, Grid Item alignment | Must |
+| CSSPROP-005 | Implement Block/Flex/Grid Layout controls | Must |
+| CSSPROP-006 | Implement Sizing and responsive units/raw values | Must |
+| CSSPROP-007 | Implement Box Model and Spacing controls | Must |
+| CSSPROP-008 | Implement Typography and theme-token integration | Must |
+| CSSPROP-009 | Implement Background, gradients, image controls | Must |
+| CSSPROP-010 | Implement Border, Outline, radius controls | Must |
+| CSSPROP-011 | Implement Effects, filters, shadows | Should |
+| CSSPROP-012 | Implement Overflow and media-fit controls | Must |
+| CSSPROP-013 | Implement Positioning and stacking controls | Must |
+| CSSPROP-014 | Implement Transform controls | Should |
+| CSSPROP-015 | Implement Transition and Animation controls | Should |
+| CSSPROP-016 | Implement responsive inheritance/override/reset model | Must |
+| CSSPROP-017 | Implement Theme Token detach/reset behavior | Must |
+| CSSPROP-018 | Implement scoped Custom CSS and raw-value preservation | Must |
+| CSSPROP-019 | Implement pseudo-state styling where supported | Should |
+| CSSPROP-020 | Implement deterministic CSS compiler and preview/publish parity tests | Must |
+| CSSPROP-021 | Integrate property edits with Undo/Redo and revision persistence | Must |
+| CSSPROP-022 | Optimize Property Editor for Desktop/Tablet/Mobile | Must |
+| CSSPROP-023 | Add accessibility and keyboard/touch tests | Must |
+| CSSPROP-024 | Verify no style or Portfolio metadata is stored in Supabase | Must |
+
+---
+
+## 30. Recommended Implementation Sequence
+
+1. Audit existing Builder engine, Property Panel, CSS output, and saved project format.
+2. Produce a support matrix: fully supported, partially supported, unsupported, or preserved-only.
+3. Define normalized style schema and engine adapter before building many controls.
+4. Implement Alignment correctly for Block, Flex Container, Flex Item, Grid Container, and Grid Item.
+5. Implement Layout, Sizing, and Spacing.
+6. Implement Typography and Theme Token integration.
+7. Implement Background, Border, Effects, Overflow, and Positioning.
+8. Implement Transform, Transition, Animation, and pseudo-states.
+9. Implement responsive inheritance and overrides across supported property groups.
+10. Implement Custom CSS and unknown declaration round-trip preservation.
+11. Validate Undo/Redo, Save/Load, multi-page behavior, and published CSS parity.
+12. Complete responsive and accessibility testing.
+
+Do not build all UI controls before confirming the engine can persist and compile their values. Start with the property schema, applicability rules, and CSS round-trip proof.
+
+---
+
+## 31. Definition of Done
+
+- Property Editor distinguishes Text Alignment, Content Alignment, and Item Alignment.
+- Block, Flexbox, and Grid have correct context-aware controls.
+- Common production CSS properties are supported through visual controls.
+- Advanced valid CSS values can be entered and preserved.
+- Responsive values and inheritance work consistently.
+- Theme tokens and local overrides behave predictably.
+- Property changes update canvas, save/reload, undo/redo, and published output.
+- Editor and published CSS render consistently.
+- Property Editor is usable on Desktop, Tablet, and Mobile.
+- No Portfolio style data or metadata is stored in Supabase.
+- Support matrix and known limitations are documented.
+
+---
+
+**End of specification.**

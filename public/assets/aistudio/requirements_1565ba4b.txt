@@ -1,0 +1,165 @@
+# IndyShares Portfolio Builder — Requirement Register
+# This is a traceable product/technical requirements file, NOT a Python pip requirements file.
+# The application stack is TypeScript/React/Cloudflare; dependency versions are managed in package.json
+# and lockfiles after the builder-engine proof of concept and version selection.
+
+# Priority legend: P0 = production baseline; P1 = planned expansion; P2 = future.
+# Status legend: BASELINE = agreed direction; VALIDATE = requires technical proof/decision.
+
+# ---------------------------------------------------------------------------
+# 1. PRODUCT AND ACCOUNT
+# ---------------------------------------------------------------------------
+FR-001 [P0] BASELINE: The platform shall support Google sign-in through Supabase Auth.
+FR-002 [P0] BASELINE: The platform shall maintain a platform user identity independent of Google Drive file ownership.
+FR-003 [P0] BASELINE: The platform shall provide authenticated dashboard and editor routes.
+FR-004 [P0] BASELINE: The platform shall support account logout and session expiration.
+FR-005 [P0] BASELINE: The platform shall provide a separate Google Workspace authorization flow for Drive and Sheets APIs.
+FR-006 [P0] BASELINE: The platform shall support Google reconnect and disconnect workflows.
+FR-007 [P0] BASELINE: The platform shall display Google connection health and the connected account.
+
+# ---------------------------------------------------------------------------
+# 2. GOOGLE WORKSPACE STORAGE
+# ---------------------------------------------------------------------------
+FR-010 [P0] BASELINE: The platform shall support Auto Setup and Existing Storage modes.
+FR-011 [P0] BASELINE: Auto Setup shall provision a Drive folder structure and a Google Spreadsheet.
+FR-012 [P0] BASELINE: Existing Storage shall allow a user to select a Spreadsheet and Drive folder using Google Picker.
+FR-013 [P0] BASELINE: The platform shall validate access and schema before using selected resources.
+FR-014 [P0] BASELINE: Provisioning operations shall be idempotent and resumable after partial failure.
+FR-015 [P0] BASELINE: Structured portfolio content and user-defined collection records shall be stored in Google Sheets.
+FR-016 [P0] BASELINE: Builder page documents and user-authored website source files shall be stored in Google Drive.
+FR-017 [P0] BASELINE: Media assets shall be stored in Google Drive as canonical user-owned files.
+FR-018 [P0] BASELINE: Drive file references shall use stable file IDs, never row numbers or inferred paths as permanent identifiers.
+FR-019 [P0] BASELINE: The platform shall maintain a manifest/index of provisioned resources and file IDs.
+FR-020 [P0] BASELINE: The platform shall detect missing, moved, inaccessible or deleted source resources.
+FR-021 [P0] BASELINE: The platform shall provide export/recovery for user-owned source documents and structured data.
+FR-022 [P0] VALIDATE: Google OAuth scopes, consent-screen configuration and verification requirements shall be validated before production launch.
+
+# ---------------------------------------------------------------------------
+# 3. SITE AND PAGE MANAGEMENT
+# ---------------------------------------------------------------------------
+FR-030 [P0] BASELINE: A user shall be able to create and manage a portfolio site.
+FR-031 [P0] BASELINE: A site shall support multiple pages with stable page IDs.
+FR-032 [P0] BASELINE: A user shall be able to create, rename, duplicate, reorder and delete pages.
+FR-033 [P0] BASELINE: Each page shall support a route/slug and SEO metadata.
+FR-034 [P0] BASELINE: Reserved and duplicate routes shall be rejected.
+FR-035 [P0] BASELINE: A site shall support reusable header/footer or equivalent global components.
+
+# ---------------------------------------------------------------------------
+# 4. VISUAL PAGE BUILDER
+# ---------------------------------------------------------------------------
+FR-040 [P0] BASELINE: The editor shall provide freeform drag-and-drop element placement.
+FR-041 [P0] BASELINE: The editor shall support nested elements and containers.
+FR-042 [P0] BASELINE: The editor shall provide an element library with categories and search.
+FR-043 [P0] BASELINE: The editor shall provide a Navigator/Layers tree.
+FR-044 [P0] BASELINE: Users shall be able to select, move, reorder, duplicate, copy, paste, hide, lock and delete supported elements.
+FR-045 [P0] BASELINE: The editor shall provide Content, Style and Advanced property controls.
+FR-046 [P0] BASELINE: The editor shall support undo and redo with bounded history.
+FR-047 [P0] BASELINE: The editor shall support preview and responsive device modes.
+FR-048 [P0] BASELINE: The editor shall support durable save and reload of builder project data.
+FR-049 [P0] BASELINE: Key editor actions shall have keyboard-accessible alternatives to drag-and-drop.
+FR-050 [P0] VALIDATE: GrapesJS is the leading candidate engine; suitability, license, version, plugin compatibility and required customization shall be validated in a proof of concept.
+
+# ---------------------------------------------------------------------------
+# 5. ELEMENTS, STYLES AND CUSTOM CODE
+# ---------------------------------------------------------------------------
+FR-060 [P0] BASELINE: The element system shall support layout, basic, content, portfolio, dynamic and advanced element families.
+FR-061 [P0] BASELINE: Elements shall have stable type IDs and versioned configuration schemas.
+FR-062 [P0] BASELINE: The styling system shall support typography, colors, backgrounds, spacing, sizing, borders, shadows and layout controls.
+FR-063 [P0] BASELINE: The platform shall support global design tokens and reusable styles/classes.
+FR-064 [P0] BASELINE: The platform shall support responsive style overrides at defined breakpoints.
+FR-065 [P0] BASELINE: The platform shall support custom HTML editing.
+FR-066 [P0] BASELINE: The platform shall support custom CSS at defined scopes.
+FR-067 [P0] BASELINE: The platform shall support custom JavaScript subject to security sign-off and isolation.
+FR-068 [P0] BASELINE: Custom code source files shall be stored in the user's Drive.
+FR-069 [P0] BASELINE: Custom code shall never execute in the same security origin as the platform admin application.
+FR-070 [P0] BASELINE: Custom code shall not access platform secrets, Supabase service credentials or Google OAuth tokens.
+FR-071 [P0] VALIDATE: CSP, iframe sandboxing, tenant origin strategy and public runtime restrictions shall be validated before enabling custom JavaScript.
+
+# ---------------------------------------------------------------------------
+# 6. DYNAMIC DATA AND COLLECTIONS
+# ---------------------------------------------------------------------------
+FR-080 [P0] BASELINE: Users shall be able to define collections backed by Google Sheets tabs.
+FR-081 [P0] BASELINE: Collections shall define field names, field types and a stable record ID.
+FR-082 [P0] BASELINE: Elements shall support dynamic text, image and link bindings.
+FR-083 [P0] BASELINE: The builder shall support repeaters and collection grids.
+FR-084 [P0] BASELINE: Supported filtering, sorting and item limits shall resolve at build time.
+FR-085 [P0] BASELINE: Missing fields, invalid types and missing assets shall be reported before publication.
+FR-086 [P0] BASELINE: Normal public visitor requests shall not query Google Sheets.
+
+# ---------------------------------------------------------------------------
+# 7. THEMES AND TEMPLATES
+# ---------------------------------------------------------------------------
+FR-090 [P0] BASELINE: The platform shall provide a theme and template library.
+FR-091 [P0] BASELINE: Applying a theme shall not lock the user out of freeform editing.
+FR-092 [P0] BASELINE: Themes and templates shall be versioned.
+FR-093 [P0] BASELINE: Theme changes shall preserve content and warn about incompatible elements.
+FR-094 [P0] BASELINE: Users shall be able to save and reuse components/templates.
+
+# ---------------------------------------------------------------------------
+# 8. SAVE, PUBLISH AND UPDATE
+# ---------------------------------------------------------------------------
+FR-100 [P0] BASELINE: Save shall persist draft source to the user's Google Workspace without changing the active public build.
+FR-101 [P0] BASELINE: Publish shall create the first public release from saved source and current Sheets data.
+FR-102 [P0] BASELINE: Update shall rebuild from latest saved source and latest accessible Sheets data.
+FR-103 [P0] BASELINE: Build artifacts shall be immutable and versioned.
+FR-104 [P0] BASELINE: The active public version shall change only after the new build passes validation.
+FR-105 [P0] BASELINE: A failed build shall leave the previous active public version available.
+FR-106 [P0] BASELINE: The platform shall support Unpublish and rollback.
+FR-107 [P0] BASELINE: The UI shall distinguish unsaved changes from saved-but-unpublished changes.
+FR-108 [P0] BASELINE: Build jobs shall be idempotent or protected against duplicate activation.
+
+# ---------------------------------------------------------------------------
+# 9. PUBLIC DELIVERY AND CACHE
+# ---------------------------------------------------------------------------
+FR-110 [P0] BASELINE: Public pages shall be served from published artifacts, not live Sheets reads.
+FR-111 [P0] BASELINE: Cache miss shall retrieve the active build artifact, not trigger a rebuild from Sheets.
+FR-112 [P0] BASELINE: Cache keys shall be tenant- and version-aware.
+FR-113 [P0] BASELINE: Update, Unpublish and Rollback shall trigger appropriate cache invalidation or version switching.
+FR-114 [P0] BASELINE: Cache shall not be treated as durable storage.
+FR-115 [P0] BASELINE: Public media delivery shall not require a visitor to authenticate to the owner's private Drive.
+FR-116 [P0] VALIDATE: Drive direct delivery versus R2 replication/hybrid delivery shall be benchmarked and decided.
+FR-117 [P0] BASELINE: Public routes shall enforce tenant isolation and publication state.
+FR-118 [P0] BASELINE: Public output shall support SEO and social metadata.
+
+# ---------------------------------------------------------------------------
+# 10. PLATFORM METADATA AND SECURITY
+# ---------------------------------------------------------------------------
+FR-120 [P0] BASELINE: Supabase shall store platform identity and operational metadata, not act as the canonical editable portfolio content database.
+FR-121 [P0] BASELINE: Supabase shall store resource IDs, site/slug registry, connection metadata and active build pointers as required.
+FR-122 [P0] BASELINE: Refresh tokens shall be encrypted at rest and accessible only to authorized server-side services.
+FR-123 [P0] BASELINE: RLS and server-side ownership checks shall protect tenant metadata.
+FR-124 [P0] BASELINE: Service-role credentials shall never be shipped to the browser.
+FR-125 [P0] BASELINE: Sensitive operations shall be auditable without logging secrets.
+FR-126 [P0] BASELINE: Account deletion and Google disconnect shall follow explicit data-retention and user-consent rules.
+
+# ---------------------------------------------------------------------------
+# 11. NON-FUNCTIONAL REQUIREMENTS
+# ---------------------------------------------------------------------------
+NFR-001 [P0] BASELINE: Public visitor requests shall not depend on Google Sheets availability.
+NFR-002 [P0] BASELINE: The last successful published version shall remain available during a failed update.
+NFR-003 [P0] BASELINE: Google API integrations shall implement quota-aware batching and transient-error retry with backoff.
+NFR-004 [P0] BASELINE: All tenant-scoped resources shall be isolated and authorization-tested.
+NFR-005 [P0] BASELINE: Page, element, theme and build schemas shall be versioned and migratable.
+NFR-006 [P0] BASELINE: The system shall provide structured logs, correlation IDs and build status visibility.
+NFR-007 [P0] BASELINE: The editor shall provide loading, empty, error, conflict and unsaved states.
+NFR-008 [P0] BASELINE: Public output shall be responsive and meet agreed accessibility standards.
+NFR-009 [P0] BASELINE: Recovery and export procedures shall be tested.
+NFR-010 [P0] VALIDATE: Numeric performance SLOs for editor latency, build time, public TTFB, cache invalidation and availability shall be set after load tests.
+NFR-011 [P0] BASELINE: Cache shall be treated as ephemeral and rebuildable from durable artifacts.
+NFR-012 [P0] BASELINE: User-authored code shall be treated as untrusted and isolated from platform control-plane secrets.
+NFR-013 [P1] BASELINE: The architecture should support custom domains and future entitlement/plan controls.
+NFR-014 [P1] BASELINE: The architecture should support future analytics and scheduled publishing.
+
+# ---------------------------------------------------------------------------
+# 12. EXPLICIT PRODUCT RULES
+# ---------------------------------------------------------------------------
+BR-001 [P0] BASELINE: Save never changes the live public website.
+BR-002 [P0] BASELINE: Publish and Update use saved source, not unsaved in-memory changes unless the UI first saves them.
+BR-003 [P0] BASELINE: Update reads the latest Google Sheets data at build time.
+BR-004 [P0] BASELINE: Public requests never fetch live Google Sheets data.
+BR-005 [P0] BASELINE: Cache miss loads the active immutable artifact; it does not invoke a Google Sheets rebuild.
+BR-006 [P0] BASELINE: Failed Update never deactivates the last successful public version.
+BR-007 [P0] BASELINE: Google Drive and Sheets source resources remain user-owned.
+BR-008 [P0] BASELINE: Platform metadata and published public copies may exist outside Google Workspace and must be disclosed.
+BR-009 [P0] BASELINE: Disconnecting Google must not silently delete user-owned files.
+BR-010 [P0] BASELINE: Unpublish must disable public access and invalidate relevant cached responses within the agreed SLA.

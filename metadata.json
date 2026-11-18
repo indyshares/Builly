@@ -1,0 +1,6 @@
+{
+  "name": "Builly",
+  "description": "Builly visual portfolio website builder with Elementor-inspired freeform visual editing and user-owned Google Workspace storage (Sheets & Drive).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

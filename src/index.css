@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --builder-canvas-bg: #F1F0F4;
+  --builder-panel-bg: #FFFFFF;
+  --builder-surface-muted: #F7F6FA;
+  --builder-surface-hover: #EFEBF5;
+  --builder-text-primary: #211B2E;
+  --builder-text-secondary: #6F687A;
+  --builder-text-muted: #918A9B;
+  --builder-border: #E7E3EC;
+  --builder-border-strong: #D4CEDE;
+  --builder-primary: #6C2CEB;
+  --builder-primary-hover: #5B20D0;
+  --builder-primary-soft: rgba(108, 44, 235, 0.08);
+  --builder-focus-ring: rgba(108, 44, 235, 0.24);
+  --builder-success: #16A34A;
+  --builder-warning: #D97706;
+  --builder-danger: #DC2626;
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Protect Page Builder chrome overlays inside canvas from inheriting website element styles */
+  [data-indy-editor-chrome] {
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: normal;
+    text-transform: none;
+    text-decoration: none;
+    text-align: left;
+    text-indent: 0;
+    word-spacing: normal;
+    white-space: normal;
+    direction: ltr;
+    writing-mode: horizontal-tb;
+    color: var(--builder-text-primary, #211B2E);
+  }
+}
+
+.builder-ui {
+  color: var(--builder-text-primary);
+  font-family: 'Plus Jakarta Sans', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.builder-ui :is(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--builder-primary);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px var(--builder-focus-ring);
+}
+
+.builder-ui input[type="number"]::-webkit-inner-spin-button,
+.builder-ui input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.builder-ui input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .builder-ui *,
+  .builder-ui *::before,
+  .builder-ui *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Scoped portfolio theme layer — strictly confined to the website canvas and public output */
+.portfolio-theme {
+  background-color: var(--color-background, #fafaf9);
+  color: var(--color-text, #1c1917);
+  font-family: var(--font-body, 'Plus Jakarta Sans', sans-serif);
+}
+
+.portfolio-theme .portfolio-heading {
+  color: var(--color-heading, var(--color-text));
+  font-family: var(--font-display, var(--font-body));
+}
+
+.portfolio-theme .portfolio-card {
+  background-color: var(--color-surface, #ffffff);
+  color: var(--color-text, #1c1917);
+  border-color: var(--color-border, #e7e5e4);
+}
+
+.portfolio-theme .portfolio-button-primary {
+  background-color: var(--color-button-primary-bg, var(--color-primary));
+  color: var(--color-button-primary-text, #ffffff);
+}
+
+.portfolio-theme .portfolio-link {
+  color: var(--color-link, var(--color-primary));
+}
+
+.portfolio-theme .portfolio-site-surface a:focus-visible,
+.portfolio-theme .portfolio-site-surface button:focus-visible,
+.portfolio-theme .portfolio-site-surface input:focus-visible,
+.portfolio-theme .portfolio-site-surface textarea:focus-visible,
+.portfolio-theme .portfolio-site-surface select:focus-visible {
+  outline: 2px solid var(--color-focus-ring, #2563eb);
+  outline-offset: 2px;
+}
+
+/* Embedded HTML Theme Integration (0 specificity via :where so user CSS & classes win cleanly) */
+:where(.portfolio-site-surface [data-indy-embed-theme="follow"]) {
+  color: var(--color-text, #1c1917);
+  font-family: var(--font-body, 'Plus Jakarta Sans', sans-serif);
+}
+
+:where(.portfolio-site-surface [data-indy-embed-theme="follow"] :is(h1, h2, h3, h4, h5, h6)) {
+  color: var(--color-heading, var(--color-text));
+  font-family: var(--font-display, var(--font-body));
+}
+
+:where(.portfolio-site-surface [data-indy-embed-theme="follow"] a) {
+  color: var(--color-link, var(--color-primary));
+}
+
+:where(.portfolio-site-surface [data-indy-embed-theme="follow"] hr) {
+  border-color: var(--color-divider, var(--color-border));
+}
+
+:where(.portfolio-site-surface [data-indy-embed-theme="follow"] code) {
+  font-family: var(--font-mono, monospace);
+}
+
+:where(.portfolio-site-surface [data-indy-embed-theme="independent"]) {
+  color: #111827;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Custom subtle scrollbars for canvas and property panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}

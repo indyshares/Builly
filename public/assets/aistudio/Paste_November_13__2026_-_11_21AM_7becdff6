@@ -1,0 +1,711 @@
+# GOOGLE_WORKSPACE_OAUTH_AND_PORTFOLIO_SHEETS_INTEGRATION.md
+
+## IndyShares Portfolio Builder
+### Real Google Account Connection, OAuth 2.0, Spreadsheet Picker & Portfolio Data Integration
+
+**Document type:** Supplemental Product / UX / Technical Change Request  
+**Version:** 1.0  
+**Status:** Proposed implementation specification  
+**Scope:** Connect each IndyShares user’s own Google account, authorize Google Sheets/Drive access, select or create a portfolio spreadsheet, and replace all mock/demo spreadsheet behavior with real API integration.  
+**Relationship:** Additive to existing IndyShares documents. Do not overwrite or silently revise prior TOR, PRD, backlog, responsive editor, theme, or other baseline files.
+
+---
+
+## 1. Purpose and Current Problem
+
+The current Portfolio Data / Google Sheets screen appears to display sample spreadsheet data and a placeholder Google Sheets URI. It behaves like a mock/demo interface rather than a real integration.
+
+The product must provide a real connection flow so each IndyShares user can:
+
+1. Connect their own Google account.
+2. Grant the required Google OAuth 2.0 permissions.
+3. Choose an existing Google Spreadsheet or create a new one for their portfolio.
+4. Link that spreadsheet to the correct IndyShares portfolio.
+5. Read and write real data through Google Sheets API.
+6. Synchronize portfolio data between the Builder and the user's spreadsheet.
+7. Reconnect or disconnect Google safely.
+
+The UI must never imply that data was saved or synchronized when no real Google API operation occurred.
+
+## 2. Product and Data Ownership Principles
+
+- The user's Google account owns the selected spreadsheet and associated Google Drive resources.
+- IndyShares stores only the minimum platform metadata needed to identify the connected account, selected spreadsheet, and integration state.
+- Google OAuth tokens are secrets and must never be exposed to browser JavaScript, page-builder custom code, public portfolio pages, logs, or client-visible API responses.
+- A connected Google account is separate from signing in to IndyShares with Google. Existing Supabase Auth login does not automatically authorize Sheets or Drive API access.
+- Every operation must be scoped to the authenticated IndyShares user and the Google connection/portfolio they own.
+- Do not use mock rows, fabricated spreadsheet URLs, fake sync success, or local-only state as a substitute for integration.
+
+### 2.1 Portfolio data storage boundary
+
+Under the current IndyShares architecture, Google Sheets is the canonical store for structured portfolio data, such as:
+
+- Profile and contact information.
+- Projects and project metadata.
+- Skills.
+- Work experience.
+- Education.
+- Social links.
+- User-defined collections and records.
+- Structured page/content data that is intentionally modeled as rows and columns.
+
+Google Drive remains the canonical store for file-oriented builder resources, such as:
+
+- Page Builder project JSON documents.
+- Reusable component definitions.
+- Custom CSS/JavaScript files.
+- Uploaded images, videos, fonts, and documents.
+- Template and published artifact files, according to the existing architecture.
+
+The application should present these resources as one connected Portfolio Storage workspace, even though Sheets and Drive serve different data types. Do not force binary media or complex Page Builder JSON into spreadsheet cells.
+
+If the product owner intends the spreadsheet to contain literally every page layout and builder document as well, that is a separate architecture decision; it is not recommended because Sheets is not a suitable file/blob store.
+
+---
+
+## 3. User Experience and Connection Flow
+
+### 3.1 Connection states
+
+The UI must explicitly represent these states:
+
+| State | Meaning | Main action |
+|---|---|---|
+| Not connected | No Google OAuth connection exists | Connect Google |
+| Connecting | OAuth flow is in progress | Show progress; prevent duplicate action |
+| Connected | Google account authorization is valid | Choose Spreadsheet |
+| Spreadsheet selected | A spreadsheet is linked to this portfolio | Open / Change Spreadsheet |
+| Syncing | Real API read/write operation is running | Show operation progress |
+| Synced | Last requested operation completed successfully | Show last sync time |
+| Needs reauthorization | Refresh token is invalid/revoked or consent is missing | Reconnect Google |
+| Error | API or permission operation failed | Show actionable error / Retry |
+| Disconnected | User intentionally removed the connection | Connect Google |
+
+Never show `Connected`, `Synced`, or a success checkmark until the corresponding backend operation has actually succeeded.
+
+### 3.2 First-time setup
+
+Recommended flow:
+
+```text
+User opens Portfolio Data / Storage
+              |
+              v
+Check IndyShares session and Google connection state
+              |
+       Not connected?
+              |
+              v
+Show "Connect Google Account"
+              |
+              v
+Backend creates OAuth authorization request
+              |
+              v
+Google consent screen
+              |
+              v
+Google redirects authorization code to backend callback
+              |
+              v
+Backend validates state and exchanges code for tokens
+              |
+              v
+Encrypt and securely store refresh token
+              |
+              v
+Connection state becomes Connected
+              |
+              v
+Open Google Picker
+              |
+       Select existing spreadsheet
+              | OR
+       Create new portfolio spreadsheet
+              |
+              v
+Backend verifies file access and spreadsheet structure
+              |
+              v
+Link spreadsheet to portfolio
+              |
+              v
+Initialize/validate required sheets and headers
+              |
+              v
+Load actual records from Google Sheets API
+              |
+              v
+Render real editable data in the UI
+```
+
+### 3.3 Connect Google action
+
+The screen should explain why the user is connecting Google and what IndyShares will access.
+
+Suggested UI copy:
+
+**Connect your Google Account**
+
+“Connect your Google account to choose a spreadsheet you own or have permission to edit. IndyShares uses the selected spreadsheet to store and manage your structured portfolio data.”
+
+Actions:
+- `Connect Google`
+- `Privacy & permissions` (explains access)
+- `Not now`
+
+Do not ask for broad Google Drive access if the selected-file workflow can meet requirements with narrower scopes.
+
+### 3.4 Select a spreadsheet
+
+After successful OAuth connection:
+
+- Launch Google Picker from a user-initiated action.
+- Allow the user to select an existing Google Spreadsheet they can access.
+- Provide a separate option to create a new spreadsheet.
+- Display spreadsheet name, owner/account context where available, and selected file identity.
+- Verify the selected file is a Google Spreadsheet and that the backend can access it.
+- Verify edit capability before enabling write/sync actions.
+- Store the spreadsheet ID, not only its URL or display name.
+- Display the actual Google Sheets URL returned/constructed from the verified spreadsheet ID.
+- Allow the user to change the linked spreadsheet with an explicit confirmation and clear migration behavior.
+
+If the user selects a spreadsheet that has an incompatible structure, offer a safe setup/migration path. Do not silently overwrite existing tabs or data.
+
+### 3.5 Create a new portfolio spreadsheet
+
+Provide a `Create portfolio spreadsheet` action.
+
+The backend should:
+1. Create the spreadsheet using Google Sheets API under the connected user's authorization.
+2. Give it a meaningful name, such as `IndyShares Portfolio — {Portfolio Name}`.
+3. Create the required tabs and headers idempotently.
+4. Add a schema/version metadata record.
+5. Verify the created spreadsheet can be read and written.
+6. Link it to the selected portfolio only after successful setup.
+7. Return the real spreadsheet URL and ID to the UI.
+
+If creation or initialization fails, do not mark the spreadsheet as connected. Provide a recoverable error and avoid creating duplicate spreadsheets on retry where possible.
+
+---
+
+## 4. Google OAuth 2.0 Requirements
+
+### 4.1 OAuth flow
+
+Use Google OAuth 2.0 Authorization Code flow with a server-side callback. Use Google Identity Services where appropriate for initiating the authorization flow, but the authorization code must be exchanged by the backend.
+
+Requirements:
+- Use HTTPS for all production OAuth redirect/callback endpoints.
+- Register exact authorized redirect URIs in Google Cloud Console.
+- Validate OAuth `state` to prevent CSRF.
+- Use PKCE where supported by the chosen client flow.
+- Use a nonce where applicable to the identity/authentication layer.
+- Request offline access when a refresh token is required for background sync.
+- Handle consent and incremental authorization deliberately.
+- Keep Google OAuth client secret and token exchange server-side only.
+- Never place client secret or refresh token in frontend environment variables.
+- Do not log authorization codes, access tokens, refresh tokens, or token-bearing request headers.
+
+### 4.2 Separate authentication and Google API authorization
+
+There are two independent concerns:
+
+1. **IndyShares authentication:** Supabase Auth establishes who is signed in to IndyShares.
+2. **Google Workspace connection:** Google OAuth grants the IndyShares backend permission to access selected Google resources.
+
+The backend must associate the Google connection with the authenticated IndyShares `user_id`. Do not assume that the Google identity used for Supabase login automatically grants Sheets API access.
+
+### 4.3 Recommended Google APIs
+
+Enable in the Google Cloud project:
+
+- Google Sheets API.
+- Google Drive API (for file metadata and selected-file operations).
+- Google Picker API (for user-driven spreadsheet selection).
+
+Use only the APIs required by implemented features.
+
+### 4.4 OAuth scopes
+
+Use the narrowest scopes that support the actual workflow. Recommended starting point for review:
+
+- `https://www.googleapis.com/auth/spreadsheets` — read/write spreadsheet contents.
+- `https://www.googleapis.com/auth/drive.file` — access files the user selects or creates/open with the application through the supported Picker workflow.
+- `openid` and basic profile/email scopes only if needed to identify/display the connected Google account.
+
+Avoid requesting full Drive access (`drive`) or broad read-only Drive access merely to list every file if Google Picker plus `drive.file` can satisfy selection.
+
+Important:
+- Confirm current Google Picker and OAuth scope requirements against official Google documentation during implementation.
+- Google may classify scopes as sensitive/restricted and require OAuth consent-screen configuration, verification, or additional review depending on scopes and app usage.
+- Explain scopes and purpose to users in the consent flow.
+- Do not request Gmail, Calendar, Contacts, or unrelated permissions.
+
+### 4.5 Token lifecycle and secure storage
+
+- Access tokens are short-lived and should be held server-side only.
+- Refresh tokens must be encrypted at rest using an approved server-side encryption mechanism.
+- Store encryption keys in platform secrets/KMS-compatible secret storage, not in source code or ordinary database columns.
+- Decrypt tokens only in the backend execution context that needs to call Google APIs.
+- Restrict access to token records by service role and user/connection ownership.
+- Never return tokens to the browser.
+- Handle token refresh, refresh-token rotation where applicable, expiry, revocation, and invalid-grant responses.
+- If refresh fails because consent was revoked or invalidated, mark the connection `reauthorization_required` and prompt the user to reconnect.
+- Support user-initiated disconnect and token revocation where supported.
+- Delete encrypted token material when the connection is disconnected, subject to audit/legal retention requirements.
+
+---
+
+## 5. Google Picker and Spreadsheet Selection
+
+### 5.1 Picker behavior
+
+- Picker must open only after the user clicks a clear selection action.
+- Configure it to show Google Spreadsheet files.
+- The selected file ID must be sent to the backend for verification.
+- Do not trust a client-supplied file name, URL, MIME type, or owner as proof of access.
+- Backend verifies file metadata and actual Sheets API access using the connected user's credentials.
+- Check MIME type is `application/vnd.google-apps.spreadsheet`.
+- Check required write access before enabling editing/sync.
+- Handle deleted, trashed, moved, or permission-revoked files.
+
+### 5.2 Spreadsheet linking
+
+A spreadsheet link is a relationship between:
+- IndyShares user.
+- IndyShares portfolio/site.
+- Google connection.
+- Google spreadsheet ID.
+
+The system must prevent one user from linking or operating on another user's connection unless explicitly supported by a safe sharing/authorization model.
+
+### 5.3 Change spreadsheet flow
+
+Changing the selected spreadsheet must require confirmation and explain:
+- New spreadsheet becomes the active structured-data source.
+- Existing spreadsheet is not automatically deleted.
+- Whether data will be imported, initialized, or left untouched.
+- Whether the previous spreadsheet remains linked for backup/history.
+
+Never silently switch data sources or overwrite a user's existing records.
+
+---
+
+## 6. Spreadsheet Schema and Initialization
+
+### 6.1 Suggested tabs
+
+The initial standard schema should align with the existing product data model. Suggested tabs:
+
+| Tab | Purpose |
+|---|---|
+| `META` | Spreadsheet schema version, portfolio ID, initialization metadata |
+| `PROFILE` | Personal/profile information |
+| `PROJECTS` | Portfolio projects |
+| `SKILLS` | Skills and proficiency |
+| `EXPERIENCE` | Work history |
+| `EDUCATION` | Education records |
+| `SOCIAL_LINKS` | Social profiles and contact links |
+| `PAGES` | Structured page/content records if required |
+| `COLLECTIONS` | User-defined collection definitions |
+| `DATA_SCHEMA` | Collection field definitions and schema metadata |
+
+Use stable record IDs (UUIDs or another stable ID format) rather than row numbers as permanent identifiers.
+
+### 6.2 Initialization rules
+
+- Initialization must be idempotent.
+- Detect existing tabs and headers before creating or modifying them.
+- Do not clear unknown tabs or existing data.
+- Use batch reads/writes where possible.
+- Validate header names and schema version.
+- Record migration/version metadata.
+- If the spreadsheet already contains data, show a migration/compatibility decision rather than overwriting it.
+- Provide a clear error report for missing tabs, invalid headers, or unsupported schema versions.
+
+### 6.3 Data editing and sync
+
+The app must define a clear source-of-truth and sync policy.
+
+Recommended initial policy:
+- Google Sheets is canonical for structured portfolio records.
+- The UI reads actual values from Sheets through the backend.
+- Changes made in the IndyShares UI are validated and written to Sheets.
+- Sync status reflects the result of the actual API write.
+- If the user edits the spreadsheet directly, the next read/refresh loads the latest values.
+- Detect conflicting updates using stable record IDs and updated timestamps/revision metadata where feasible.
+- Do not silently overwrite concurrent external edits.
+
+For larger updates:
+- Read in batches.
+- Process in memory.
+- Write in batches.
+- Use retries with exponential backoff for transient 429/5xx errors.
+- Avoid one API call per cell or row.
+- Respect Google Sheets API quotas and execution time limits.
+
+### 6.4 Sync terminology
+
+Avoid a generic Sync button that has ambiguous meaning. Define actions clearly:
+
+- `Refresh from Google Sheets`: fetch latest spreadsheet data into the UI.
+- `Save changes to Google Sheets`: write current validated edits.
+- `Sync`: only use if it has a documented two-way reconciliation policy.
+
+Display:
+- Last successful read time.
+- Last successful write time.
+- Current sync status.
+- Number of records read/written where useful.
+- Actionable error and retry option.
+
+---
+
+## 7. Backend API and Service Boundaries
+
+Implement Google integration in the backend (Cloudflare Worker or the approved server-side integration layer), not directly in public frontend code.
+
+Suggested service boundaries:
+
+- `GoogleOAuthService`
+  - Build authorization URL.
+  - Validate callback state.
+  - Exchange authorization code.
+  - Refresh/revoke tokens.
+- `GoogleConnectionService`
+  - Store connection metadata.
+  - Encrypt/decrypt refresh token through secret-management boundary.
+  - Disconnect and reauthorization status.
+- `GooglePickerSessionService`
+  - Provide safe Picker configuration/token strategy required by the chosen Picker implementation.
+- `GoogleDriveService`
+  - Verify selected spreadsheet metadata and permissions.
+- `GoogleSheetsService`
+  - Read/write/batch update spreadsheet data.
+  - Initialize tabs and headers.
+  - Validate schema.
+- `PortfolioStorageService`
+  - Link spreadsheet to portfolio.
+  - Enforce owner/tenant access.
+  - Coordinate data-source changes.
+- `PortfolioSyncService`
+  - Refresh, save, reconcile, and record sync status.
+
+Suggested API endpoints (names are illustrative; align to existing API conventions):
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/integrations/google/oauth/start` | Create authorization URL/state |
+| GET | `/api/integrations/google/oauth/callback` | Receive authorization code and complete OAuth |
+| GET | `/api/integrations/google/connection` | Read connection status/account display info |
+| DELETE | `/api/integrations/google/connection` | Disconnect/revoke integration |
+| POST | `/api/integrations/google/picker/session` | Create safe Picker session/configuration if needed |
+| POST | `/api/portfolios/{portfolioId}/storage/spreadsheet` | Link verified spreadsheet |
+| POST | `/api/portfolios/{portfolioId}/storage/spreadsheet/create` | Create and initialize spreadsheet |
+| GET | `/api/portfolios/{portfolioId}/storage/spreadsheet` | Read linked spreadsheet metadata |
+| POST | `/api/portfolios/{portfolioId}/data/refresh` | Refresh data from Sheets |
+| POST | `/api/portfolios/{portfolioId}/data/save` | Validate and write changes to Sheets |
+| GET | `/api/portfolios/{portfolioId}/data/sync-status` | Read sync status |
+
+Every endpoint must:
+- Require a valid IndyShares session.
+- Verify the caller owns or has authorized access to the portfolio.
+- Resolve the correct Google connection server-side.
+- Validate all IDs and payloads.
+- Apply rate limits and audit relevant actions.
+- Return safe error messages without leaking tokens or private provider details.
+
+---
+
+## 8. Platform Metadata Model
+
+Supabase PostgreSQL stores integration metadata, not the user's canonical portfolio records.
+
+Suggested tables (adapt to existing schema):
+
+### `google_connections`
+
+| Field | Purpose |
+|---|---|
+| `id` | Internal connection ID |
+| `user_id` | IndyShares owner |
+| `google_subject` | Stable Google account subject/identifier where available |
+| `google_email` | Display email, if obtained and permitted |
+| `encrypted_refresh_token` | Encrypted token material or secure secret reference |
+| `granted_scopes` | Granted scopes |
+| `status` | connected / reauthorization_required / disconnected |
+| `connected_at` | Connection timestamp |
+| `updated_at` | Last update |
+
+### `portfolio_storage_connections`
+
+| Field | Purpose |
+|---|---|
+| `id` | Internal link ID |
+| `portfolio_id` | IndyShares portfolio |
+| `user_id` | Owner |
+| `google_connection_id` | Google connection |
+| `spreadsheet_id` | Verified Google spreadsheet ID |
+| `spreadsheet_name` | Display name cache |
+| `spreadsheet_url` | Verified URL for UI display |
+| `schema_version` | Initialized data schema version |
+| `status` | active / needs_attention / disconnected |
+| `linked_at` | Link timestamp |
+| `updated_at` | Last update |
+
+### `portfolio_sync_runs`
+
+| Field | Purpose |
+|---|---|
+| `id` | Sync operation ID |
+| `portfolio_id` | Portfolio |
+| `user_id` | Owner |
+| `operation` | refresh / save / initialize |
+| `status` | queued / running / succeeded / failed |
+| `started_at` | Start time |
+| `completed_at` | Completion time |
+| `records_read` | Count where available |
+| `records_written` | Count where available |
+| `error_code` | Safe normalized error code |
+| `error_summary` | Safe user-facing summary |
+
+Security requirements:
+- Enable RLS on metadata tables.
+- Users may read only their own connection and portfolio metadata.
+- Browser clients must never read encrypted refresh-token fields.
+- Service-role access must remain server-side.
+- Add database uniqueness/foreign-key constraints appropriate to the ownership model.
+- Never use spreadsheet row numbers as permanent record identifiers.
+
+---
+
+## 9. Security and Privacy Requirements
+
+- OAuth callback must validate state and bind the flow to the initiating IndyShares user/session.
+- Use exact redirect URI allowlists.
+- Protect against CSRF, authorization-code replay, and account/portfolio mix-ups.
+- Keep client secret and refresh tokens server-side.
+- Encrypt refresh tokens at rest.
+- Do not expose tokens to Page Builder custom HTML/CSS/JS or published portfolio runtime.
+- Do not pass access tokens to arbitrary third-party scripts.
+- Restrict CORS to approved application origins.
+- Use secure, HttpOnly, SameSite cookies for session flows where applicable.
+- Validate ownership on every portfolio and spreadsheet operation.
+- Audit connect, reconnect, select, change, disconnect, initialize, read, and write events without logging secrets or portfolio contents unnecessarily.
+- Provide a privacy explanation of what data is accessed and stored.
+- Provide a user-facing disconnect action and a documented data-retention/deletion policy.
+
+---
+
+## 10. Error Handling and Recovery
+
+Handle at minimum:
+
+| Scenario | Expected behavior |
+|---|---|
+| User cancels consent | Return to app with connection still Not connected; no fake success |
+| Invalid/missing OAuth state | Reject callback and restart flow safely |
+| Authorization code expired/reused | Show retry/reconnect guidance |
+| Refresh token revoked/expired | Mark reauthorization required |
+| User selects non-Sheets file | Reject with clear message |
+| User lacks edit permission | Offer read-only mode only if explicitly supported; otherwise reject linking for write workflow |
+| Spreadsheet deleted/trashed | Mark storage unavailable and prompt user to select another |
+| Spreadsheet permission removed | Mark needs attention and prompt reauthorization/permission repair |
+| Sheets API quota exceeded | Retry with backoff where safe; show temporary issue |
+| Network/API failure during write | Do not show success; record operation failure and support safe retry |
+| Partial batch write | Record partial result and use idempotent recovery strategy |
+| Existing incompatible schema | Offer migration/backup path; never clear silently |
+| User disconnects Google | Stop future API calls and clear/revoke token material as defined |
+
+Retries must be idempotent where possible. Do not create duplicate tabs, spreadsheets, or records when a request is retried.
+
+---
+
+## 11. UI Requirements
+
+Replace the current mock/demo data interface with real integration states.
+
+### 11.1 Not connected screen
+
+Display:
+- Google Sheets/Drive integration explanation.
+- `Connect Google` primary action.
+- Privacy/scope explanation.
+- No fake tabs or example records presented as live user data.
+
+### 11.2 Connected, no spreadsheet selected
+
+Display:
+- Connected Google account email (safe display metadata).
+- `Choose Spreadsheet` action.
+- `Create New Portfolio Spreadsheet` action.
+- Disconnect action.
+
+### 11.3 Spreadsheet selected
+
+Display:
+- Real spreadsheet name.
+- Verified Google Sheets link.
+- Connected Google account.
+- Schema/setup status.
+- Last read/write/sync times.
+- Refresh, Save, Change Spreadsheet, and Disconnect actions as appropriate.
+- Real tabs and records returned by Sheets API.
+- Empty states when the actual sheet has no records.
+
+### 11.4 Loading and failure states
+
+- Show loading while connecting, selecting, reading, writing, or initializing.
+- Disable duplicate submissions during an operation.
+- Show specific, actionable errors.
+- Preserve unsaved UI edits after recoverable errors.
+- Never show a green success indicator before backend confirmation.
+
+### 11.5 Remove mock data
+
+- Remove hardcoded sample rows from production integration views.
+- Sample data may exist only in a clearly labeled demo mode or automated test fixtures.
+- Demo mode must never display fake connected status or a fake real Google Sheets URL.
+- Production UI must distinguish `Demo`, `Not connected`, and `Connected`.
+
+---
+
+## 12. Acceptance Criteria
+
+The feature is complete only when:
+
+1. User can click Connect Google and complete real Google OAuth 2.0 consent.
+2. OAuth callback is validated and tokens are stored securely server-side.
+3. The Google account connection is associated with the correct IndyShares user.
+4. User can open Google Picker and select a real Google Spreadsheet.
+5. Backend verifies the selected spreadsheet and write permission.
+6. User can create a new spreadsheet and initialize required tabs/headers.
+7. Selected spreadsheet ID and metadata are linked to the correct portfolio.
+8. UI displays the real spreadsheet name and URL.
+9. UI reads real rows from Google Sheets API; no mock rows are shown as live data.
+10. User can create/update data and verify the write in their actual Google Spreadsheet.
+11. User can edit the spreadsheet externally and refresh data in IndyShares.
+12. Connection and sync states reflect actual API results.
+13. Token revocation and reauthorization are handled.
+14. User can disconnect the Google account safely.
+15. Two different users cannot read or write each other's spreadsheet through IndyShares.
+16. No Google token or client secret is exposed to browser code, public pages, custom code, or logs.
+17. Existing Page Builder JSON/media storage in Drive remains compatible with the established storage architecture.
+18. Error and retry flows do not silently duplicate or destroy user data.
+
+---
+
+## 13. QA Test Plan
+
+### OAuth
+- Connect with a valid Google account.
+- Cancel consent.
+- Deny requested scopes.
+- Invalid state and callback replay.
+- Refresh token success and failure.
+- Revoke access from Google Account settings.
+- Reconnect after revocation.
+- Disconnect from IndyShares.
+- Confirm tokens never appear in browser network responses, local storage, or logs.
+
+### Picker and spreadsheet
+- Select a valid spreadsheet.
+- Select a non-spreadsheet file.
+- Select a spreadsheet with read-only permission.
+- Select a spreadsheet with edit permission.
+- Cancel Picker.
+- Select a large spreadsheet.
+- Select a spreadsheet with existing tabs/data.
+- Select an incompatible schema.
+- Create and initialize a new spreadsheet.
+- Verify no duplicate tabs/spreadsheets on retry.
+
+### Data operations
+- Read actual records.
+- Create, update, and delete a record if supported by product rules.
+- Refresh after external Google Sheets edits.
+- Test concurrent edits/conflict behavior.
+- Test quota/rate limit and transient API failure.
+- Test partial write recovery.
+- Confirm stable IDs survive row reordering.
+
+### Tenant isolation
+- Connect two separate IndyShares users to different Google accounts.
+- Verify each user sees only their own connection and linked spreadsheet.
+- Attempt cross-user portfolio/spreadsheet ID substitution.
+- Verify no token or spreadsheet content leaks through public portfolio pages.
+
+### UI
+- Not connected, connecting, connected, no spreadsheet, selected spreadsheet, syncing, synced, error, and reauthorization states.
+- Desktop, tablet, and mobile layouts.
+- Keyboard/touch operation.
+- Empty spreadsheet state and populated spreadsheet state.
+
+---
+
+## 14. Supplemental Backlog
+
+These IDs are additive and must not renumber existing backlog items.
+
+| ID | Work item | Priority |
+|---|---|---|
+| GWS-001 | Audit and remove production mock/demo spreadsheet behavior | Must |
+| GWS-002 | Configure Google Cloud project, APIs, OAuth consent screen, and credentials | Must |
+| GWS-003 | Define minimum OAuth scopes and verification requirements | Must |
+| GWS-004 | Implement server-side OAuth authorization-code flow and callback | Must |
+| GWS-005 | Implement state validation and PKCE/CSRF protections | Must |
+| GWS-006 | Implement encrypted refresh-token storage and token refresh | Must |
+| GWS-007 | Implement Google connection status and disconnect/reconnect | Must |
+| GWS-008 | Implement Google Picker spreadsheet selection | Must |
+| GWS-009 | Implement backend spreadsheet metadata/permission verification | Must |
+| GWS-010 | Implement create-new-portfolio-spreadsheet workflow | Must |
+| GWS-011 | Implement idempotent tab/header/schema initialization | Must |
+| GWS-012 | Implement real Sheets API read operations | Must |
+| GWS-013 | Implement validated Sheets API write/batch operations | Must |
+| GWS-014 | Implement portfolio-to-spreadsheet ownership/link registry | Must |
+| GWS-015 | Implement sync status and operation history | Must |
+| GWS-016 | Implement quota handling, retries, and partial-write recovery | Must |
+| GWS-017 | Implement schema compatibility and safe migration flow | Must |
+| GWS-018 | Replace mock UI with real connection and data states | Must |
+| GWS-019 | Add tenant isolation and OAuth security tests | Must |
+| GWS-020 | Add end-to-end tests against a dedicated Google test account | Must |
+| GWS-021 | Document Google OAuth production deployment and verification steps | Must |
+| GWS-022 | Add user-facing data access, disconnect, and retention documentation | Must |
+
+---
+
+## 15. Implementation Sequence
+
+1. **Audit current mock:** Identify hardcoded records, fake spreadsheet URLs, local-only sync state, and placeholder buttons.
+2. **Google Cloud setup:** Configure project, APIs, OAuth consent screen, authorized domains, callback URIs, and credentials.
+3. **Scope/security review:** Confirm the minimum scopes for Picker and Sheets access; document consent/verification obligations.
+4. **Backend OAuth:** Implement authorization URL, state, callback, code exchange, encrypted refresh token storage, refresh, and revoke.
+5. **Connection UI:** Implement Not connected, Connecting, Connected, Reauthorization, Error, and Disconnected states.
+6. **Picker integration:** Select a real spreadsheet and verify it server-side.
+7. **Spreadsheet provisioning:** Create spreadsheet, initialize schema idempotently, and link it to portfolio.
+8. **Real data access:** Implement read, write, refresh, validation, and sync status.
+9. **Recovery/security:** Add quota handling, token revocation, ownership checks, audit, and recovery.
+10. **End-to-end validation:** Verify with dedicated Google test accounts and actual spreadsheets.
+11. **Production readiness:** Complete OAuth consent-screen verification/review where required and configure production secrets/domains.
+
+Do not mark the feature complete after OAuth login alone. The full selected-spreadsheet read/write lifecycle must work.
+
+---
+
+## 16. Definition of Done
+
+- No production mock/demo spreadsheet behavior remains in the real integration workflow.
+- Real Google OAuth 2.0 connection works.
+- Google tokens are stored and used securely server-side.
+- User can select or create a real spreadsheet.
+- The selected spreadsheet is verified and linked to the correct portfolio.
+- Real data can be read and written through Google Sheets API.
+- Sync state and error handling reflect actual backend operations.
+- Data ownership, tenant isolation, disconnect, and reauthorization are tested.
+- Desktop, tablet, and mobile connection/setup flows are usable.
+- Documentation covers deployment, scopes, consent verification, secrets, and recovery.
+
+---
+
+**End of supplemental change request.**
