@@ -176,15 +176,43 @@ export const workspaceApiClient = {
       }),
     });
 
-    const data = await parseJsonSafe<{ authorizeUrl?: string; error?: string; code?: string }>(res);
+    const data = await parseJsonSafe<{
+      authorizeUrl?: string;
+      error?: string;
+      code?: string;
+      diagnostics?: Record<string, unknown>;
+    }>(res);
     if (!res.ok || !data.authorizeUrl) {
       throw new WorkerApiError(
         data.error || 'Could not start Google Workspace authorization.',
         res.status,
-        data.code || 'OAUTH_START_FAILED'
+        data.code || 'OAUTH_START_FAILED',
+        { details: data.diagnostics }
       );
     }
     return { authorizeUrl: data.authorizeUrl };
+  },
+
+  /**
+   * Fetches safe, non-sensitive runtime diagnostics from the Worker OAuth subsystem.
+   */
+  async getOAuthDiagnostics(): Promise<{
+    ok: boolean;
+    diagnostics?: Record<string, unknown>;
+    error?: string;
+  }> {
+    try {
+      const res = await fetch(buildWorkerUrl('/api/google/oauth/diagnostics'), {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      return await parseJsonSafe(res);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Could not reach OAuth diagnostics endpoint.',
+      };
+    }
   },
 
   /**

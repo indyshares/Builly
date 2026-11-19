@@ -1,5 +1,6 @@
 import {
   handleGoogleOAuthCallback,
+  handleGoogleOAuthDiagnostics,
   handleGoogleOAuthDisconnect,
   handleGoogleOAuthStart,
   handleWorkspaceStatus,
@@ -86,6 +87,8 @@ export default {
         response = await handleConsoleApiRequest(request, env, pathname);
       } else if (pathname === '/api/workspace/status' && request.method === 'GET') {
         response = await handleWorkspaceStatus(request, env);
+      } else if (pathname === '/api/google/oauth/diagnostics' && request.method === 'GET') {
+        response = handleGoogleOAuthDiagnostics(request, env);
       } else if (pathname === '/api/google/oauth/start' && request.method === 'POST') {
         response = await handleGoogleOAuthStart(request, env);
       } else if (pathname === '/api/google/oauth/callback' && request.method === 'GET') {

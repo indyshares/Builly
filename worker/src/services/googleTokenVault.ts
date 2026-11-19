@@ -1,4 +1,5 @@
 import { decryptSecret, encryptSecret } from '../security/encryption';
+import { resolveGoogleOAuthCredentials } from '../security/googleOAuthCredentials';
 import { StoredCredentialRow, WorkerEnv } from '../types';
 
 export async function saveEncryptedWorkspaceCredential(
@@ -131,12 +132,13 @@ export async function mintOwnerGoogleAccessToken(
     env.TOKEN_ENCRYPTION_KEY
   );
 
+  const creds = resolveGoogleOAuthCredentials(env);
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: env.GOOGLE_OAUTH_CLIENT_ID,
-      client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
     }),

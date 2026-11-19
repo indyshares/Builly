@@ -11,6 +11,9 @@ export interface WorkerEnv {
   GOOGLE_WORKSPACE_SCOPES: string;
   TOKEN_ENCRYPTION_KEY: string;
   ALLOWED_FRONTEND_ORIGINS?: string;
+  VITE_GOOGLE_OAUTH_CLIENT_ID?: string;
+  VITE_GOOGLE_WORKSPACE_SCOPES?: string;
+  VITE_WORKER_API_URL?: string;
 }
 
 export interface VerifiedSession {
