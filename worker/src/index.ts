@@ -28,19 +28,38 @@ export { WorkspaceLockDO } from './do/WorkspaceLockDO';
 
 function withCors(request: Request, env: WorkerEnv, response: Response): Response {
   const reqOrigin = (request.headers.get('Origin') || '').trim().replace(/\/+$/, '');
-  const allowed = (env.ALLOWED_FRONTEND_ORIGINS || '')
+  const configuredAllowed = (env.ALLOWED_FRONTEND_ORIGINS || '')
     .split(',')
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
+  const defaultAllowed = [
+    'https://builly-project.mycloudsfireworks.workers.dev',
+    'https://builly.indyshares.com',
+    'http://localhost:3000',
+    'http://localhost:8787',
+  ];
+
+  const allowed = Array.from(new Set([...configuredAllowed, ...defaultAllowed]));
+
+  const isDynamicAllowed =
+    reqOrigin.endsWith('.run.app') ||
+    reqOrigin.endsWith('.workers.dev') ||
+    reqOrigin.endsWith('.indyshares.com') ||
+    reqOrigin.startsWith('http://localhost:') ||
+    reqOrigin.startsWith('http://127.0.0.1:');
+
   const headers = new Headers(response.headers);
-  if (reqOrigin && allowed.includes(reqOrigin)) {
+  if (reqOrigin && (allowed.includes(reqOrigin) || isDynamicAllowed)) {
     headers.set('Access-Control-Allow-Origin', reqOrigin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
   } else if (request.url.includes('/api/public/')) {
     headers.set('Access-Control-Allow-Origin', '*');
   }
+
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, If-Match');
+  headers.set('Access-Control-Max-Age', '86400');
   headers.set('Vary', 'Origin');
 
   return new Response(response.body, {
