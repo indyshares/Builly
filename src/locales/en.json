@@ -1721,6 +1721,25 @@
       "submitBtn": "Create Organization & Enter Console",
       "submittingBtn": "Creating Organization..."
     },
+    "outage": {
+      "readOnlyTitle": "Google Drive connection unavailable — Read-only cached mode",
+      "readOnlyDesc": "Showing authorized cached data. Writes are disabled until Google Workspace OAuth reconnects and refreshes canonical state from Drive.",
+      "unavailableTitle": "Workspace data unavailable while Google OAuth is disconnected",
+      "unavailableDesc": "No authorized cached snapshot is available for this resource. Reconnect Google Workspace and retry to fetch canonical state from Drive.",
+      "lastSyncedLabel": "Last synced",
+      "reconnectGoogleBtn": "Reconnect Google"
+    },
+    "recovery": {
+      "heading": "Runtime Index & Drive Recovery",
+      "statusSummary": "Pending D1 repairs: {{repairs}} · Needs reconciliation: {{reconcile}}",
+      "processRepairsBtn": "Process Repair Queue",
+      "rebuildIndexBtn": "Rebuild Index from Drive",
+      "rebuildSuccess": "Rebuilt runtime index from Drive ({{orgs}} orgs, {{projects}} projects, {{sites}} sites).",
+      "repairQueueSuccess": "Processed repair queue ({{completed}} / {{processed}} repaired).",
+      "recoverOpResult": "Operation {{opId}} status: {{status}}",
+      "needsReconciliationHeading": "Operations awaiting reconciliation",
+      "recoverBtn": "Recover"
+    },
     "orgs": {
       "label": "Organization",
       "newBtn": "New Organization",
@@ -1729,7 +1748,13 @@
       "namePlaceholder": "Organization name (2–80 chars)",
       "createSubmit": "Create",
       "cancel": "Cancel",
-      "roleBadge": "Role: {{role}}"
+      "roleBadge": "Role: {{role}}",
+      "archivedBadge": "Archived",
+      "archiveBtn": "Archive",
+      "deletePermanentBtn": "Delete Permanently",
+      "deleteRequiresEmptyHint": "Delete or permanently remove all projects in this organization first.",
+      "quotaNote": "archived count until deleted",
+      "confirmDeleteDesc": "Permanently delete organization \"{{orgName}}\"? This cannot be undone and will remove its Drive manifest entry."
     },
     "projects": {
       "heading": "Projects in {{orgName}}",
@@ -1753,7 +1778,9 @@
       "renameSite": "Edit Site",
       "viewLiveSite": "Open /s/{{slug}}",
       "statusPublished": "Published",
-      "statusDraft": "Draft"
+      "statusDraft": "Draft",
+      "quotaNote": "archived count until deleted",
+      "archivedBannerDesc": "This Project is archived and read-only. Permanently delete it in Project Settings to free an Organization project slot."
     },
     "modules": {
       "builder": "Visual Builder",
@@ -1852,7 +1879,8 @@
       "manifestFileLabel": "Manifest file",
       "spreadsheetLabel": "CMS Spreadsheet",
       "revisionStat": "CMS Revision",
-      "taxonomyStat": "Taxonomies & Terms"
+      "taxonomyStat": "Taxonomies & Terms",
+      "datasetSpreadsheetsLabel": "Per-dataset Spreadsheets"
     },
     "moduleShell": {
       "breadcrumbsAria": "Project module breadcrumbs",
@@ -1945,7 +1973,15 @@
       "dangerDesc": "Clears only this browser's cached draft and asset cache for this Project. Google Drive folders, Sheets tables, and published Cloudflare releases are never modified.",
       "resetLocalCacheBtn": "Clear Local Project Draft Cache",
       "confirmResetTitle": "Clear local draft cache?",
-      "confirmResetDesc": "Any unpublished edits stored only in this browser for this Project will revert to the starter template. Remote Drive & published Sites remain untouched."
+      "confirmResetDesc": "Any unpublished edits stored only in this browser for this Project will revert to the starter template. Remote Drive & published Sites remain untouched.",
+      "lifecycleTitle": "Project Lifecycle & Permanent Deletion",
+      "lifecycleActiveDesc": "Archiving locks this Project in read-only mode. Archived projects still count toward the 10-project limit until permanently deleted.",
+      "lifecycleArchivedDesc": "This Project is archived and locked. Permanently delete it when no longer needed to reclaim its Organization slot.",
+      "archiveProjectBtn": "Archive Project",
+      "deleteProjectPermanentBtn": "Delete Project Permanently",
+      "projectArchivedSuccess": "Project archived and set to read-only.",
+      "confirmDeleteProjectTitle": "Permanently delete \"{{name}}\"?",
+      "confirmDeleteProjectDesc": "This removes the Project from canonical Drive manifests and the runtime index. Attached Sites must be deleted or unlinked if applicable. This cannot be undone."
     },
     "migration": {
       "bannerTitle": "Legacy workspace items available to migrate",

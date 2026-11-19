@@ -13,13 +13,24 @@ import {
 } from './cmsService';
 import { buildCmsSheetTables } from './cmsWorkspaceAdapter';
 
+import { DatasetSpreadsheetRef } from '../../types/workspace';
+
 const PROJECT_CMS_KEY_PREFIX = 'builly_project_cms:';
 const LEGACY_SITE_STORAGE_KEY = 'indyshares_portfolio_site_v2';
 const PROJECT_DRAFT_KEY_PREFIX = 'builly_project_draft:';
 
 export type CmsListener = (cms: CmsDocument) => void;
 
+export interface CmsRemoteMeta {
+  revision?: number;
+  readOnly?: boolean;
+  stale?: boolean;
+  lastSyncedAt?: string | null;
+  datasetSpreadsheets?: DatasetSpreadsheetRef[];
+}
+
 const inMemoryCache = new Map<string, CmsDocument>();
+const inMemoryRemoteMeta = new Map<string, CmsRemoteMeta>();
 const listenersByScope = new Map<string, Set<CmsListener>>();
 
 function normalizeScopeKey(projectId?: string | null): string {
@@ -224,9 +235,16 @@ export const cmsRepository = {
   clearCache(projectId?: string | null): void {
     if (projectId === undefined) {
       inMemoryCache.clear();
+      inMemoryRemoteMeta.clear();
       return;
     }
-    inMemoryCache.delete(normalizeScopeKey(projectId));
+    const key = normalizeScopeKey(projectId);
+    inMemoryCache.delete(key);
+    inMemoryRemoteMeta.delete(key);
+  },
+
+  getRemoteMeta(projectId?: string | null): CmsRemoteMeta | null {
+    return inMemoryRemoteMeta.get(normalizeScopeKey(projectId)) || null;
   },
 
   saveRecord(
@@ -327,6 +345,11 @@ export const cmsRepository = {
     options?: { forceAdoptRemote?: boolean }
   ): Promise<{
     workspaceConnected: boolean;
+    readOnly?: boolean;
+    stale?: boolean;
+    lastSyncedAt?: string | null;
+    remoteRevision?: number;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
     found: boolean;
     folderId: string;
     manifestFileId: string;
@@ -338,6 +361,20 @@ export const cmsRepository = {
       includeDocument: true,
     });
     const localCms = cmsRepository.getCms(projectId);
+    const scopeKey = normalizeScopeKey(projectId);
+    const remoteRevision =
+      res.revision ??
+      (res.document
+        ? Number((res.document as { cmsRevision?: number; revision?: number }).cmsRevision ?? res.document.revision ?? 1)
+        : undefined);
+
+    inMemoryRemoteMeta.set(scopeKey, {
+      revision: remoteRevision,
+      readOnly: res.readOnly,
+      stale: res.stale,
+      lastSyncedAt: res.lastSyncedAt ?? null,
+      datasetSpreadsheets: res.datasetSpreadsheets || [],
+    });
 
     if (!res.found || !res.document) {
       const nextWithHealth: CmsDocument = {
@@ -351,6 +388,11 @@ export const cmsRepository = {
       };
       return {
         workspaceConnected: res.workspaceConnected,
+        readOnly: res.readOnly,
+        stale: res.stale,
+        lastSyncedAt: res.lastSyncedAt ?? null,
+        remoteRevision,
+        datasetSpreadsheets: res.datasetSpreadsheets || [],
         found: false,
         folderId: res.folderId,
         manifestFileId: res.manifestFileId,
@@ -360,7 +402,11 @@ export const cmsRepository = {
       };
     }
 
-    const remoteRev = Number((res.document as { cmsRevision?: number; revision?: number }).cmsRevision ?? res.document.revision ?? 1);
+    const remoteRev = Number(
+      (res.document as { cmsRevision?: number; revision?: number }).cmsRevision ??
+        res.document.revision ??
+        1
+    );
     const shouldAdopt =
       Boolean(options?.forceAdoptRemote) ||
       !cmsRepository.hasStoredCms(projectId) ||
@@ -376,13 +422,18 @@ export const cmsRepository = {
           cmsFolderDriveId: res.folderId || localCms.storageHealth.cmsFolderDriveId,
           manifestDriveFileId: res.manifestFileId || localCms.storageHealth.manifestDriveFileId,
           lastCmsPullAt: new Date().toISOString(),
-          syncStatus: 'synced',
+          syncStatus: res.stale ? 'idle' : 'synced',
           lastError: null,
         },
       });
       const saved = cmsRepository.saveCms(projectId, merged);
       return {
         workspaceConnected: res.workspaceConnected,
+        readOnly: res.readOnly,
+        stale: res.stale,
+        lastSyncedAt: res.lastSyncedAt ?? null,
+        remoteRevision,
+        datasetSpreadsheets: res.datasetSpreadsheets || [],
         found: true,
         folderId: res.folderId,
         manifestFileId: res.manifestFileId,
@@ -394,6 +445,11 @@ export const cmsRepository = {
 
     return {
       workspaceConnected: res.workspaceConnected,
+      readOnly: res.readOnly,
+      stale: res.stale,
+      lastSyncedAt: res.lastSyncedAt ?? null,
+      remoteRevision,
+      datasetSpreadsheets: res.datasetSpreadsheets || [],
       found: true,
       folderId: res.folderId,
       manifestFileId: res.manifestFileId,
@@ -411,16 +467,22 @@ export const cmsRepository = {
       projectName?: string;
       siteId?: string;
       ownerAccountId?: string;
+      expectedRevision?: number;
     }
   ): Promise<{
     cms: CmsDocument;
     folderId: string;
     manifestFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
+    revision?: number;
     tabsSynced: string[];
     syncedAt: string;
   }> {
+    const scopeKey = normalizeScopeKey(projectId);
     const current = cmsRepository.getCms(projectId);
+    const cachedMeta = inMemoryRemoteMeta.get(scopeKey);
+    const expectedRevision = options?.expectedRevision ?? cachedMeta?.revision;
     const syncSheets = options?.syncSheets !== false;
     const tables = syncSheets
       ? buildCmsSheetTables(current, {
@@ -434,6 +496,15 @@ export const cmsRepository = {
       syncSheets,
       title: options?.projectName ? `Builly CMS — ${options.projectName}` : undefined,
       tables,
+      ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+    });
+
+    inMemoryRemoteMeta.set(scopeKey, {
+      revision: savedRemote.revision ?? expectedRevision,
+      readOnly: false,
+      stale: false,
+      lastSyncedAt: savedRemote.syncedAt,
+      datasetSpreadsheets: savedRemote.datasetSpreadsheets || cachedMeta?.datasetSpreadsheets || [],
     });
 
     const nextCms = cmsRepository.saveCms(projectId, {
@@ -466,6 +537,8 @@ export const cmsRepository = {
       folderId: savedRemote.folderId,
       manifestFileId: savedRemote.manifestFileId,
       spreadsheetId: savedRemote.spreadsheetId,
+      datasetSpreadsheets: savedRemote.datasetSpreadsheets,
+      revision: savedRemote.revision,
       tabsSynced: savedRemote.tabsSynced,
       syncedAt: savedRemote.syncedAt,
     };

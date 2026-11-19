@@ -7,15 +7,18 @@ import {
   Inbox,
   Loader2,
   RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CmsInboxView } from '../../components/cms/CmsInboxView';
 import { ProjectModuleHeader } from '../../components/console/ProjectModuleHeader';
+import { WorkerApiError } from '../../features/workspace-connection/workspaceApiClient';
 import { workspaceHierarchyClient } from '../../features/console/workspaceHierarchyClient';
 import { cmsRepository } from '../../services/cms/cmsRepository';
 import { escapeSheetFormulaCell } from '../../services/cms/cmsValidation';
 import { CmsDocument, InboxSubmission } from '../../types/cms';
 import {
+  DatasetSpreadsheetRef,
   OrganizationRecord,
   ProjectModuleRecord,
   ProjectRecord,
@@ -31,6 +34,9 @@ interface ProjectInboxPageProps {
   accessToken: string;
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   authBusy: boolean;
   onNavigate: (to: string, options?: { replace?: boolean }) => void;
   onSignOut: () => Promise<void>;
@@ -158,6 +164,9 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
   accessToken,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   authBusy,
   onNavigate,
   onSignOut,
@@ -170,8 +179,18 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
   const [destinationsCount, setDestinationsCount] = useState(0);
   const [deliveryIssueCount, setDeliveryIssueCount] = useState(0);
   const [spreadsheetId, setSpreadsheetId] = useState('');
+  const [datasetSpreadsheets, setDatasetSpreadsheets] = useState<DatasetSpreadsheetRef[]>([]);
+  const [remoteRevision, setRemoteRevision] = useState<number | undefined>(undefined);
+  const [remoteReadOnly, setRemoteReadOnly] = useState(readOnly);
+  const [remoteStale, setRemoteStale] = useState(outageStale);
+  const [remoteUnavailable, setRemoteUnavailable] = useState(false);
+  const [remoteLastSyncedAt, setRemoteLastSyncedAt] = useState<string | null>(outageLastSyncedAt);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+
+  const effectiveReadOnly = Boolean(
+    readOnly || remoteReadOnly || remoteUnavailable || project.status === 'archived'
+  );
 
   useEffect(() => {
     setCms(cmsRepository.getCms(project.project_id));
@@ -184,10 +203,16 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
     if (!accessToken) return;
     setLoadingRemote(true);
     setErrorBanner(null);
+    setRemoteUnavailable(false);
     try {
       const data = await workspaceHierarchyClient.getProjectInbox(accessToken, project.project_id);
       setDestinationsCount(data.destinations.length);
       setSpreadsheetId(data.spreadsheetId || '');
+      setDatasetSpreadsheets(data.datasetSpreadsheets || []);
+      setRemoteRevision(data.revision);
+      setRemoteReadOnly(Boolean(readOnly || data.readOnly));
+      setRemoteStale(Boolean(outageStale || data.stale));
+      setRemoteLastSyncedAt(data.lastSyncedAt ?? outageLastSyncedAt ?? null);
       setDeliveryIssueCount(
         data.deliveryLogs.filter((d) => d.status === 'partial_error').length
       );
@@ -201,11 +226,18 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
         setNotice(t('console.inbox.pulledNewCount', { count: addedCount }));
       }
     } catch (err) {
+      if (
+        err instanceof WorkerApiError &&
+        (err.status === 503 || err.code === 'WRITE_DISABLED_OAUTH_UNAVAILABLE')
+      ) {
+        setRemoteUnavailable(true);
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Unable to load remote Inbox.');
     } finally {
       setLoadingRemote(false);
     }
-  }, [accessToken, project.project_id, t]);
+  }, [accessToken, project.project_id, readOnly, outageStale, outageLastSyncedAt, t]);
 
   useEffect(() => {
     void fetchRemoteInbox();
@@ -220,6 +252,10 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
   );
 
   const handleSyncToDriveAndSheets = async () => {
+    if (effectiveReadOnly) {
+      setErrorBanner(t('console.outage.readOnlyDesc'));
+      return;
+    }
     if (!googleWorkspaceConnected || googleWorkspaceNeedsReauth) {
       setErrorBanner(t('console.inbox.workspaceNotConnected'));
       return;
@@ -248,6 +284,7 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
       ]);
 
       const res = await workspaceHierarchyClient.syncProjectInbox(accessToken, project.project_id, {
+        ...(remoteRevision !== undefined ? { expectedRevision: remoteRevision } : {}),
         inboxState: {
           forms: cms.forms || [],
           inboxCategories: cms.inboxCategories || [],
@@ -282,8 +319,14 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
       });
 
       setSpreadsheetId(res.spreadsheetId || '');
+      setDatasetSpreadsheets(res.datasetSpreadsheets || []);
+      if (res.revision !== undefined) setRemoteRevision(res.revision);
+      setRemoteLastSyncedAt(res.syncedAt);
       setNotice(t('console.inbox.syncSuccess'));
     } catch (err) {
+      if (err instanceof WorkerApiError && err.status === 503) {
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Failed to sync Project Inbox.');
     } finally {
       setSyncingRemote(false);
@@ -353,7 +396,12 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
 
             <button
               type="button"
-              disabled={syncingRemote || !googleWorkspaceConnected || googleWorkspaceNeedsReauth}
+              disabled={
+                syncingRemote ||
+                !googleWorkspaceConnected ||
+                googleWorkspaceNeedsReauth ||
+                effectiveReadOnly
+              }
               onClick={handleSyncToDriveAndSheets}
               className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
@@ -439,8 +487,79 @@ export const ProjectInboxPage: React.FC<ProjectInboxPageProps> = ({
           </div>
         )}
 
+        {(remoteReadOnly || remoteStale || remoteUnavailable) && accessToken && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableTitle')
+                    : t('console.outage.readOnlyTitle')}
+                </div>
+                <div className="text-amber-900">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableDesc')
+                    : t('console.outage.readOnlyDesc')}
+                </div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {remoteLastSyncedAt
+                    ? new Date(remoteLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void fetchRemoteInbox()}
+                className="min-h-[34px] px-3 py-1 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-950 whitespace-nowrap"
+              >
+                {t('console.retryBtn')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('/workspace')}
+                className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap"
+              >
+                {t('console.outage.reconnectGoogleBtn')}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {datasetSpreadsheets.length > 0 && (
+          <div className="rounded-xl border border-[#211B2E]/10 bg-white px-4 py-3 text-xs flex flex-wrap items-center justify-between gap-2">
+            <span className="font-semibold text-[#211B2E]">
+              {t('console.cms.datasetSpreadsheetsLabel')}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {datasetSpreadsheets.map((ds) => (
+                <span
+                  key={`${ds.datasetKey}:${ds.spreadsheetId}`}
+                  className="font-mono text-[11px] px-2 py-0.5 rounded bg-[#F7F6FA] border border-[#211B2E]/10 text-[#4A435C]"
+                >
+                  {ds.title || ds.datasetKey}: {ds.spreadsheetId}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         <section className="rounded-xl border border-[#211B2E]/10 bg-white overflow-hidden min-h-[580px] flex flex-col">
-          {(cms.inboxSubmissions || []).length === 0 ? (
+          {remoteUnavailable && (cms.inboxSubmissions || []).length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-10 text-center space-y-3">
+              <ShieldAlert className="w-10 h-10 text-amber-600" />
+              <div className="text-sm font-semibold text-[#211B2E]">
+                {t('console.outage.unavailableTitle')}
+              </div>
+              <p className="text-xs text-[#4A435C] max-w-md">{t('console.outage.unavailableDesc')}</p>
+            </div>
+          ) : (cms.inboxSubmissions || []).length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center p-10 text-center space-y-3">
               <Inbox className="w-10 h-10 text-[#574F6B]/50" />
               <div className="text-sm font-semibold text-[#211B2E]">

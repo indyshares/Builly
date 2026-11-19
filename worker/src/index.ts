@@ -21,7 +21,10 @@ import {
   handlePublicResolveSite,
 } from './routes/publicRuntime';
 import { handleConsoleApiRequest } from './routes/consoleApi';
+import { BuillyTransactionError } from './services/transactionErrors';
 import { WorkerEnv } from './types';
+
+export { WorkspaceLockDO } from './do/WorkspaceLockDO';
 
 function withCors(request: Request, env: WorkerEnv, response: Response): Response {
   const reqOrigin = request.headers.get('Origin') || '';
@@ -37,7 +40,7 @@ function withCors(request: Request, env: WorkerEnv, response: Response): Respons
     headers.set('Access-Control-Allow-Origin', '*');
   }
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, If-Match');
   headers.set('Vary', 'Origin');
 
   return new Response(response.body, {
@@ -57,62 +60,76 @@ export default {
     const { pathname } = url;
 
     let response: Response | null = null;
-    if (pathname === '/api/health' && request.method === 'GET') {
-      response = Response.json({ ok: true, service: 'builly-workspace-worker', runtimeVersion: '1.0.0' });
-    } else if (pathname.startsWith('/api/console/')) {
-      response = await handleConsoleApiRequest(request, env, pathname);
-    } else if (pathname === '/api/workspace/status' && request.method === 'GET') {
-      response = await handleWorkspaceStatus(request, env);
-    } else if (pathname === '/api/google/oauth/start' && request.method === 'POST') {
-      response = await handleGoogleOAuthStart(request, env);
-    } else if (pathname === '/api/google/oauth/callback' && request.method === 'GET') {
-      // Browser top-level redirect from Google — return directly without overwriting redirect headers
-      return handleGoogleOAuthCallback(request, env);
-    } else if (pathname === '/api/google/oauth/disconnect' && request.method === 'POST') {
-      response = await handleGoogleOAuthDisconnect(request, env);
-    } else if (pathname === '/api/drive/file' && request.method === 'GET') {
-      response = await handleDriveVerifyFile(request, env);
-    } else if (pathname === '/api/sheets/meta' && request.method === 'GET') {
-      response = await handleSheetsReadMeta(request, env);
-    } else if (pathname === '/api/sheets/values/read' && request.method === 'POST') {
-      response = await handleSheetsReadValues(request, env);
-    } else if (pathname === '/api/sheets/values/write' && request.method === 'POST') {
-      response = await handleSheetsWriteValues(request, env);
-    } else if (pathname === '/api/sheets/values/append' && request.method === 'POST') {
-      response = await handleSheetsAppendValues(request, env);
-    } else if (pathname === '/api/sheets/spreadsheets/ensure' && request.method === 'POST') {
-      response = await handleSheetsEnsureSpreadsheet(request, env);
-    } else if (pathname === '/api/public/sites/resolve' && request.method === 'GET') {
-      response = await handlePublicResolveSite(request, env);
-    } else {
-      const ownerPubMatch = pathname.match(/^\/api\/owner\/sites\/([^/]+)\/publish$/);
-      const ownerRollbackMatch = pathname.match(/^\/api\/owner\/sites\/([^/]+)\/rollback$/);
-      const pubRuntimeMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/runtime$/);
-      const pubCmsMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/cms\/query$/);
-      const pubFormMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/forms\/([^/]+)\/submit$/);
-      const pubAssetMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/assets\/([^/]+)$/);
+    try {
+      if (pathname === '/api/health' && request.method === 'GET') {
+        response = Response.json({ ok: true, service: 'builly-workspace-worker', runtimeVersion: '1.0.0' });
+      } else if (pathname.startsWith('/api/console/')) {
+        response = await handleConsoleApiRequest(request, env, pathname);
+      } else if (pathname === '/api/workspace/status' && request.method === 'GET') {
+        response = await handleWorkspaceStatus(request, env);
+      } else if (pathname === '/api/google/oauth/start' && request.method === 'POST') {
+        response = await handleGoogleOAuthStart(request, env);
+      } else if (pathname === '/api/google/oauth/callback' && request.method === 'GET') {
+        // Browser top-level redirect from Google — return directly without overwriting redirect headers
+        return handleGoogleOAuthCallback(request, env);
+      } else if (pathname === '/api/google/oauth/disconnect' && request.method === 'POST') {
+        response = await handleGoogleOAuthDisconnect(request, env);
+      } else if (pathname === '/api/drive/file' && request.method === 'GET') {
+        response = await handleDriveVerifyFile(request, env);
+      } else if (pathname === '/api/sheets/meta' && request.method === 'GET') {
+        response = await handleSheetsReadMeta(request, env);
+      } else if (pathname === '/api/sheets/values/read' && request.method === 'POST') {
+        response = await handleSheetsReadValues(request, env);
+      } else if (pathname === '/api/sheets/values/write' && request.method === 'POST') {
+        response = await handleSheetsWriteValues(request, env);
+      } else if (pathname === '/api/sheets/values/append' && request.method === 'POST') {
+        response = await handleSheetsAppendValues(request, env);
+      } else if (pathname === '/api/sheets/spreadsheets/ensure' && request.method === 'POST') {
+        response = await handleSheetsEnsureSpreadsheet(request, env);
+      } else if (pathname === '/api/public/sites/resolve' && request.method === 'GET') {
+        response = await handlePublicResolveSite(request, env);
+      } else {
+        const ownerPubMatch = pathname.match(/^\/api\/owner\/sites\/([^/]+)\/publish$/);
+        const ownerRollbackMatch = pathname.match(/^\/api\/owner\/sites\/([^/]+)\/rollback$/);
+        const pubRuntimeMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/runtime$/);
+        const pubCmsMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/cms\/query$/);
+        const pubFormMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/forms\/([^/]+)\/submit$/);
+        const pubAssetMatch = pathname.match(/^\/api\/public\/sites\/([^/]+)\/assets\/([^/]+)$/);
 
-      if (ownerPubMatch && request.method === 'POST') {
-        response = await handleOwnerPublishSite(request, env, decodeURIComponent(ownerPubMatch[1]));
-      } else if (ownerRollbackMatch && request.method === 'POST') {
-        response = await handleOwnerRollbackSite(request, env, decodeURIComponent(ownerRollbackMatch[1]));
-      } else if (pubRuntimeMatch && request.method === 'GET') {
-        response = await handlePublicGetRuntimeSnapshot(request, env, decodeURIComponent(pubRuntimeMatch[1]));
-      } else if (pubCmsMatch && request.method === 'POST') {
-        response = await handlePublicCmsQuery(request, env, decodeURIComponent(pubCmsMatch[1]));
-      } else if (pubFormMatch && request.method === 'POST') {
-        response = await handlePublicFormSubmit(
-          request,
-          env,
-          decodeURIComponent(pubFormMatch[1]),
-          decodeURIComponent(pubFormMatch[2])
-        );
-      } else if (pubAssetMatch && request.method === 'GET') {
-        response = await handlePublicAssetProxy(
-          request,
-          env,
-          decodeURIComponent(pubAssetMatch[1]),
-          decodeURIComponent(pubAssetMatch[2])
+        if (ownerPubMatch && request.method === 'POST') {
+          response = await handleOwnerPublishSite(request, env, decodeURIComponent(ownerPubMatch[1]));
+        } else if (ownerRollbackMatch && request.method === 'POST') {
+          response = await handleOwnerRollbackSite(request, env, decodeURIComponent(ownerRollbackMatch[1]));
+        } else if (pubRuntimeMatch && request.method === 'GET') {
+          response = await handlePublicGetRuntimeSnapshot(request, env, decodeURIComponent(pubRuntimeMatch[1]));
+        } else if (pubCmsMatch && request.method === 'POST') {
+          response = await handlePublicCmsQuery(request, env, decodeURIComponent(pubCmsMatch[1]));
+        } else if (pubFormMatch && request.method === 'POST') {
+          response = await handlePublicFormSubmit(
+            request,
+            env,
+            decodeURIComponent(pubFormMatch[1]),
+            decodeURIComponent(pubFormMatch[2])
+          );
+        } else if (pubAssetMatch && request.method === 'GET') {
+          response = await handlePublicAssetProxy(
+            request,
+            env,
+            decodeURIComponent(pubAssetMatch[1]),
+            decodeURIComponent(pubAssetMatch[2])
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof BuillyTransactionError) {
+        response = Response.json(err.toSafeJson(), { status: err.status });
+      } else {
+        response = Response.json(
+          {
+            error: err instanceof Error ? err.message : 'Internal Worker error.',
+            code: 'INTERNAL_WORKER_ERROR',
+          },
+          { status: 500 }
         );
       }
     }

@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  ShieldAlert,
   Trash2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -30,11 +31,13 @@ import { cmsRepository } from '../../services/cms/cmsRepository';
 import { saveActiveProjectContext } from '../../services/storageService';
 import { CmsContentRecord, CmsDocument } from '../../types/cms';
 import {
+  DatasetSpreadsheetRef,
   OrganizationRecord,
   ProjectModuleRecord,
   ProjectRecord,
   SiteRecord,
 } from '../../types/workspace';
+import { WorkerApiError } from '../../features/workspace-connection/workspaceApiClient';
 import { buildBuilderUrl, buildConsoleUrl } from '../../utils/routes';
 
 type StandaloneCmsTab = 'overview' | 'content' | 'taxonomies' | 'types' | 'settings';
@@ -48,6 +51,9 @@ interface ProjectCmsPageProps {
   ownerId: string;
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   authBusy: boolean;
   onNavigate: (to: string, options?: { replace?: boolean }) => void;
   onSignOut: () => Promise<void>;
@@ -62,6 +68,9 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
   ownerId,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   authBusy,
   onNavigate,
   onSignOut,
@@ -86,15 +95,22 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
   const [loadingRemoteMeta, setLoadingRemoteMeta] = useState(false);
   const [syncingRemote, setSyncingRemote] = useState(false);
   const [pullingRemote, setPullingRemote] = useState(false);
+  const [remoteReadOnly, setRemoteReadOnly] = useState<boolean>(readOnly);
+  const [remoteStale, setRemoteStale] = useState<boolean>(outageStale);
+  const [remoteUnavailable, setRemoteUnavailable] = useState<boolean>(false);
+  const [remoteLastSyncedAt, setRemoteLastSyncedAt] = useState<string | null>(outageLastSyncedAt);
   const [remoteInfo, setRemoteInfo] = useState<{
     folderId: string;
     manifestFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets: DatasetSpreadsheetRef[];
     found: boolean;
-  }>({ folderId: '', manifestFileId: '', spreadsheetId: '', found: false });
+  }>({ folderId: '', manifestFileId: '', spreadsheetId: '', datasetSpreadsheets: [], found: false });
 
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+
+  const effectiveReadOnly = Boolean(readOnly || remoteReadOnly || remoteUnavailable || project.status === 'archived');
 
   const showNotice = useCallback((msg: string) => {
     setErrorBanner(null);
@@ -112,26 +128,39 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
   }, [project.project_id]);
 
   // Initial non-destructive check against Project Drive CMS manifest
-  useEffect(() => {
+  const checkRemoteMeta = useCallback(() => {
     if (!accessToken) return;
     let cancelled = false;
     setLoadingRemoteMeta(true);
+    setRemoteUnavailable(false);
     cmsRepository
       .loadFromProjectServer(project.project_id, accessToken)
       .then((res) => {
         if (cancelled) return;
+        setRemoteReadOnly(Boolean(readOnly || res.readOnly));
+        setRemoteStale(Boolean(outageStale || res.stale));
+        setRemoteLastSyncedAt(res.lastSyncedAt ?? outageLastSyncedAt ?? null);
         setRemoteInfo({
           folderId: res.folderId,
           manifestFileId: res.manifestFileId,
           spreadsheetId: res.spreadsheetId,
+          datasetSpreadsheets: res.datasetSpreadsheets || [],
           found: res.found,
         });
         if (res.adoptedRemote) {
           setCms(res.cms);
         }
       })
-      .catch(() => {
-        // Keep local cache operational if Worker is unreachable or Workspace not connected yet
+      .catch((err) => {
+        if (cancelled) return;
+        if (
+          err instanceof WorkerApiError &&
+          (err.status === 503 || err.code === 'WRITE_DISABLED_OAUTH_UNAVAILABLE')
+        ) {
+          setRemoteUnavailable(true);
+          setRemoteReadOnly(true);
+          setErrorBanner(err.message);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingRemoteMeta(false);
@@ -139,7 +168,11 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [project.project_id, accessToken]);
+  }, [project.project_id, accessToken, readOnly, outageStale, outageLastSyncedAt]);
+
+  useEffect(() => {
+    return checkRemoteMeta();
+  }, [checkRemoteMeta]);
 
   const isBuilderEnabled = useMemo(() => {
     const rec = modules.find((m) => m.module_key === 'builder');
@@ -265,6 +298,10 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
   };
 
   const handlePushSync = async () => {
+    if (effectiveReadOnly) {
+      setErrorBanner(t('console.outage.readOnlyDesc'));
+      return;
+    }
     if (!googleWorkspaceConnected || googleWorkspaceNeedsReauth) {
       setErrorBanner(t('console.cms.workspaceNotConnected'));
       return;
@@ -283,10 +320,15 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
         folderId: res.folderId,
         manifestFileId: res.manifestFileId,
         spreadsheetId: res.spreadsheetId,
+        datasetSpreadsheets: res.datasetSpreadsheets || [],
         found: true,
       });
+      setRemoteLastSyncedAt(res.syncedAt);
       showNotice(t('console.cms.syncSuccess', { count: res.tabsSynced.length }));
     } catch (err) {
+      if (err instanceof WorkerApiError && err.status === 503) {
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Failed to sync Project CMS.');
     } finally {
       setSyncingRemote(false);
@@ -304,10 +346,15 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
       const res = await cmsRepository.loadFromProjectServer(project.project_id, accessToken, {
         forceAdoptRemote: true,
       });
+      setRemoteReadOnly(Boolean(readOnly || res.readOnly));
+      setRemoteStale(Boolean(outageStale || res.stale));
+      setRemoteLastSyncedAt(res.lastSyncedAt ?? outageLastSyncedAt ?? null);
+      setRemoteUnavailable(false);
       setRemoteInfo({
         folderId: res.folderId,
         manifestFileId: res.manifestFileId,
         spreadsheetId: res.spreadsheetId,
+        datasetSpreadsheets: res.datasetSpreadsheets || [],
         found: res.found,
       });
       if (!res.found) {
@@ -317,6 +364,10 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
       setCms(res.cms);
       showNotice(t('console.cms.pullSuccess', { count: res.cms.records.length }));
     } catch (err) {
+      if (err instanceof WorkerApiError && err.status === 503) {
+        setRemoteUnavailable(true);
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Failed to pull Project CMS from Drive.');
     } finally {
       setPullingRemote(false);
@@ -488,7 +539,7 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
               </button>
               <button
                 type="button"
-                disabled={syncingRemote || pullingRemote}
+                disabled={syncingRemote || pullingRemote || effectiveReadOnly}
                 onClick={handlePushSync}
                 className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
               >
@@ -568,7 +619,52 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
           })}
         </nav>
 
-        {/* Asynchronous Status / Error Banners */}
+        {/* Asynchronous Status / Outage / Error Banners */}
+        {(remoteReadOnly || remoteStale || remoteUnavailable) && accessToken && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableTitle')
+                    : t('console.outage.readOnlyTitle')}
+                </div>
+                <div className="text-amber-900">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableDesc')
+                    : t('console.outage.readOnlyDesc')}
+                </div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {remoteLastSyncedAt
+                    ? new Date(remoteLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void checkRemoteMeta()}
+                className="min-h-[34px] px-3 py-1 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-950 whitespace-nowrap"
+              >
+                {t('console.retryBtn')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('/workspace')}
+                className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap"
+              >
+                {t('console.outage.reconnectGoogleBtn')}
+              </button>
+            </div>
+          </section>
+        )}
+
         {loadingRemoteMeta && (
           <div className="rounded-xl border border-[#211B2E]/10 bg-white px-4 py-3 text-xs text-[#4A435C] flex items-center gap-2">
             <Loader2 className="w-4 h-4 text-[#6C2CEB] animate-spin shrink-0" />
@@ -1076,15 +1172,31 @@ export const ProjectCmsPage: React.FC<ProjectCmsPageProps> = ({
               <div className="py-3 flex flex-wrap items-center justify-between gap-3">
                 <span className="text-[#574F6B]">{t('console.cms.lastSyncedAt')}</span>
                 <span className="font-mono text-[#211B2E]">
-                  {cms.storageHealth.lastCmsSyncAt || t('console.cms.neverSynced')}
+                  {remoteLastSyncedAt || cms.storageHealth.lastCmsSyncAt || t('console.cms.neverSynced')}
                 </span>
               </div>
+              {remoteInfo.datasetSpreadsheets.length > 0 && (
+                <div className="py-3 space-y-2">
+                  <div className="text-[#574F6B]">{t('console.cms.datasetSpreadsheetsLabel')}</div>
+                  <div className="space-y-1.5">
+                    {remoteInfo.datasetSpreadsheets.map((ds) => (
+                      <div
+                        key={`${ds.datasetKey}:${ds.spreadsheetId}`}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#F7F6FA] px-3 py-1.5 border border-[#211B2E]/10"
+                      >
+                        <span className="font-semibold text-[#211B2E]">{ds.title || ds.datasetKey}</span>
+                        <span className="font-mono text-[11px] text-[#574F6B]">{ds.spreadsheetId}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 type="button"
-                disabled={syncingRemote || pullingRemote}
+                disabled={syncingRemote || pullingRemote || effectiveReadOnly}
                 onClick={handlePushSync}
                 className="min-h-[38px] px-4 py-2 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
               >

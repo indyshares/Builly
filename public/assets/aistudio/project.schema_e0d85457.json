@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "organization_id",
+    "name",
+    "status",
+    "folder_id",
+    "config_folder_id",
+    "data_folder_id",
+    "assets_folder_id",
+    "exports_folder_id",
+    "revision"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "organization_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "archived",
+        "deleted"
+      ]
+    },
+    "folder_id": {
+      "type": "string"
+    },
+    "config_folder_id": {
+      "type": "string"
+    },
+    "data_folder_id": {
+      "type": "string"
+    },
+    "assets_folder_id": {
+      "type": "string"
+    },
+    "exports_folder_id": {
+      "type": "string"
+    },
+    "enabled_module_keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

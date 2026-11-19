@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
+  Archive,
   ArrowLeft,
   CheckCircle2,
   FolderOpen,
   Loader2,
   Save,
+  ShieldAlert,
   Trash2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -31,6 +33,9 @@ interface ProjectSettingsPageProps {
   accessToken: string;
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   togglingModuleKey: string | null;
   provisioningDrive: boolean;
   authBusy: boolean;
@@ -49,6 +54,9 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
   accessToken,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   togglingModuleKey,
   provisioningDrive,
   authBusy,
@@ -59,17 +67,22 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
   onSignOut,
 }) => {
   const { t } = useTranslation();
+  const writesLocked = Boolean(readOnly || project.status === 'archived');
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || '');
   const [savingMeta, setSavingMeta] = useState(false);
 
+  const [archivingProject, setArchivingProject] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(false);
+  const [confirmPermanentDelete, setConfirmPermanentDelete] = useState(false);
   const [confirmClearLocal, setConfirmClearLocal] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   const handleSaveMetadata = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (writesLocked) return;
     setErrorBanner(null);
     setNotice(null);
     if (name.trim().length < 2) {
@@ -81,6 +94,7 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
       await workspaceHierarchyClient.updateProject(accessToken, project.project_id, {
         name: name.trim(),
         description: description.trim(),
+        expectedRevision: project.canonical_revision,
       });
       await onRefreshBootstrap();
       setNotice(t('console.settings.savedSuccess'));
@@ -88,6 +102,43 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
       setErrorBanner(err instanceof Error ? err.message : 'Unable to update Project metadata.');
     } finally {
       setSavingMeta(false);
+    }
+  };
+
+  const handleArchiveProject = async () => {
+    if (readOnly || project.status === 'archived') return;
+    setErrorBanner(null);
+    setNotice(null);
+    setArchivingProject(true);
+    try {
+      await workspaceHierarchyClient.archiveProject(accessToken, project.project_id, {
+        expectedRevision: project.canonical_revision,
+      });
+      await onRefreshBootstrap();
+      setNotice(t('console.settings.projectArchivedSuccess'));
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'Unable to archive Project.');
+    } finally {
+      setArchivingProject(false);
+    }
+  };
+
+  const handleDeleteProjectPermanently = async () => {
+    if (readOnly || project.status !== 'archived') return;
+    setErrorBanner(null);
+    setNotice(null);
+    setDeletingProject(true);
+    try {
+      await workspaceHierarchyClient.deleteProject(accessToken, project.project_id, {
+        confirmPermanentDelete: true,
+      });
+      setConfirmPermanentDelete(false);
+      await onRefreshBootstrap();
+      onNavigate(buildConsoleUrl({ orgId: organization.org_id }));
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'Unable to delete Project permanently.');
+    } finally {
+      setDeletingProject(false);
     }
   };
 
@@ -133,6 +184,34 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
             {t('console.settings.subtitle', { projectName: project.name })}
           </p>
         </div>
+
+        {(readOnly || outageStale) && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">{t('console.outage.readOnlyTitle')}</div>
+                <div className="text-amber-900">{t('console.outage.readOnlyDesc')}</div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {outageLastSyncedAt
+                    ? new Date(outageLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('/workspace')}
+              className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap shrink-0"
+            >
+              {t('console.outage.reconnectGoogleBtn')}
+            </button>
+          </section>
+        )}
 
         {notice && (
           <div
@@ -216,7 +295,7 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
 
             <button
               type="submit"
-              disabled={savingMeta}
+              disabled={savingMeta || writesLocked}
               className="min-h-[38px] px-4 py-2 rounded-lg bg-[#6C2CEB] hover:bg-[#5920CB] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
               {savingMeta ? (
@@ -258,7 +337,7 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
                   </div>
                   <button
                     type="button"
-                    disabled={busy || modKey === 'settings'}
+                    disabled={busy || modKey === 'settings' || writesLocked}
                     onClick={() => void onToggleModule(modKey, enabled)}
                     className={`min-h-[34px] px-3 py-1 rounded border text-xs font-semibold shrink-0 disabled:opacity-50 ${
                       enabled
@@ -296,7 +375,7 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
             {googleWorkspaceConnected && !googleWorkspaceNeedsReauth ? (
               <button
                 type="button"
-                disabled={provisioningDrive}
+                disabled={provisioningDrive || writesLocked}
                 onClick={() => void onProvisionDrive(Boolean(project.drive_folder_id))}
                 className="min-h-[38px] px-4 py-2 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
               >
@@ -335,6 +414,48 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
           )}
         </section>
 
+        {/* Project Lifecycle: Archive & Permanent Delete */}
+        <section className="rounded-xl border border-[#211B2E]/15 bg-white p-6 space-y-4">
+          <div className="space-y-1">
+            <h2 className="font-['Outfit',sans-serif] text-base font-semibold text-[#211B2E]">
+              {t('console.settings.lifecycleTitle')}
+            </h2>
+            <p className="text-xs text-[#4A435C] leading-relaxed">
+              {project.status === 'archived'
+                ? t('console.settings.lifecycleArchivedDesc')
+                : t('console.settings.lifecycleActiveDesc')}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {project.status === 'active' ? (
+              <button
+                type="button"
+                disabled={archivingProject || readOnly}
+                onClick={() => void handleArchiveProject()}
+                className="min-h-[36px] px-3.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {archivingProject ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Archive className="w-3.5 h-3.5" />
+                )}
+                <span>{t('console.settings.archiveProjectBtn')}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={deletingProject || readOnly}
+                onClick={() => setConfirmPermanentDelete(true)}
+                className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{t('console.settings.deleteProjectPermanentBtn')}</span>
+              </button>
+            )}
+          </div>
+        </section>
+
         {/* Danger Zone (Browser Local Cache Only — Non-Destructive to Remote Drive / D1) */}
         <section className="rounded-xl border border-red-200 bg-white p-6 space-y-3">
           <div className="flex items-start gap-2.5">
@@ -360,6 +481,42 @@ export const ProjectSettingsPage: React.FC<ProjectSettingsPageProps> = ({
             </button>
           </div>
         </section>
+
+        {confirmPermanentDelete && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-50 bg-[#211B2E]/50 flex items-center justify-center p-4"
+          >
+            <div className="bg-white rounded-xl border border-[#211B2E]/15 max-w-md w-full p-5 space-y-4">
+              <h3 className="font-['Outfit',sans-serif] text-base font-semibold text-red-900">
+                {t('console.settings.confirmDeleteProjectTitle', { name: project.name })}
+              </h3>
+              <p className="text-xs text-[#4A435C] leading-relaxed">
+                {t('console.settings.confirmDeleteProjectDesc')}
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={deletingProject}
+                  onClick={() => setConfirmPermanentDelete(false)}
+                  className="min-h-[36px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 text-xs font-medium text-[#211B2E]"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingProject || readOnly}
+                  onClick={() => void handleDeleteProjectPermanently()}
+                  className="min-h-[36px] px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {deletingProject && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{t('console.settings.deleteProjectPermanentBtn')}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {confirmClearLocal && (
           <div

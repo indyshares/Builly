@@ -29,15 +29,35 @@ export interface WorkspaceSafeStatus {
   message?: string;
 }
 
+export interface WorkerApiErrorExtra {
+  operationId?: string;
+  retryable?: boolean;
+  projectionStatus?: string;
+  details?: Record<string, unknown>;
+}
+
 export class WorkerApiError extends Error {
   status: number;
   code: string;
+  operationId?: string;
+  retryable?: boolean;
+  projectionStatus?: string;
+  details?: Record<string, unknown>;
 
-  constructor(message: string, status = 500, code = 'WORKER_ERROR') {
+  constructor(
+    message: string,
+    status = 500,
+    code = 'WORKER_ERROR',
+    extra?: WorkerApiErrorExtra
+  ) {
     super(message);
     this.name = 'WorkerApiError';
     this.status = status;
     this.code = code;
+    this.operationId = extra?.operationId;
+    this.retryable = extra?.retryable;
+    this.projectionStatus = extra?.projectionStatus;
+    this.details = extra?.details;
   }
 }
 

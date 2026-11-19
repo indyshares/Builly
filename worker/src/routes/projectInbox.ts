@@ -1,12 +1,25 @@
 import {
+  driveFetchWithRetry,
+  verifyDriveParent,
+} from '../services/driveCanonicalClient';
+import {
+  bootstrapAccountDrive,
+  upsertCanonicalResourceRegistryEntry,
+} from '../services/driveManifestService';
+import {
   ensureFolderSegment,
   ensureProjectDriveTree,
   listFilesInFolder,
+  readDriveJsonWithConcurrency,
   readJsonFileById,
   upsertWorkspaceResource,
   writeJsonFileInFolder,
 } from '../services/driveProvisioner';
 import { mintOwnerGoogleAccessToken } from '../services/googleTokenVault';
+import { readManagementCache, writeManagementCache } from '../services/managementCacheService';
+import { withMutationLock } from '../services/mutationLockService';
+import { generateOperationId } from '../services/operationJournalService';
+import { BuillyTransactionError } from '../services/transactionErrors';
 import {
   HierarchyServiceError,
   requireProjectAccess,
@@ -36,142 +49,225 @@ interface RemoteSheetSubmission {
 }
 
 function mapInboxError(err: unknown): Response {
+  if (err instanceof BuillyTransactionError) {
+    return Response.json(err.toSafeJson(), { status: err.status });
+  }
   if (err instanceof HierarchyServiceError) {
     return Response.json({ error: err.message, code: err.code }, { status: err.status });
   }
   const code = err instanceof Error ? err.message : 'PROJECT_INBOX_ERROR';
-  const status = code === 'WORKSPACE_REAUTH_REQUIRED' ? 401 : 500;
+  const isOauthOutage = code === 'WORKSPACE_REAUTH_REQUIRED';
   return Response.json(
     {
-      error:
-        code === 'WORKSPACE_REAUTH_REQUIRED'
-          ? 'Google Workspace connection or reauthorization is required.'
-          : err instanceof Error
-          ? err.message
-          : 'Project Inbox operation failed.',
-      code,
+      error: isOauthOutage
+        ? 'Google Workspace connection is unavailable or expired.'
+        : err instanceof Error
+        ? err.message
+        : 'Project Inbox operation failed.',
+      code: isOauthOutage ? 'WRITE_DISABLED_OAUTH_UNAVAILABLE' : code,
     },
-    { status }
+    { status: isOauthOutage ? 503 : 500 }
   );
 }
 
-async function ensureAndSyncInboxSpreadsheet(params: {
-  db: D1Database;
+/**
+ * Maintains ONE Google Spreadsheet per used/existing Inbox dataset under Data/Inbox/.
+ * Never creates empty unused dataset spreadsheets unless already provisioned or populated.
+ */
+async function ensureAndSyncInboxDatasets(params: {
+  env: WorkerEnv;
   accessToken: string;
   ownerId: string;
   orgId: string;
   projectId: string;
+  projectName: string;
   dataInboxFolderId: string;
-  title: string;
   tables: InboxSheetTableInput[];
-}): Promise<{ spreadsheetId: string; tabsSynced: string[] }> {
-  const { db, accessToken, ownerId, orgId, projectId, dataInboxFolderId, title, tables } = params;
+  operationId: string;
+}): Promise<{
+  spreadsheetId: string;
+  datasetSpreadsheets: Record<string, string>;
+  tabsSynced: string[];
+}> {
+  const {
+    env,
+    accessToken,
+    ownerId,
+    orgId,
+    projectId,
+    projectName,
+    dataInboxFolderId,
+    tables,
+    operationId,
+  } = params;
 
-  const existing = await db
-    .prepare(
-      `SELECT spreadsheet_id FROM workspace_resources
-       WHERE project_id = ? AND resource_kind = 'inbox_spreadsheet' AND status = 'active'
-       ORDER BY created_at ASC LIMIT 1`
-    )
+  const existingRows = await env.DB.prepare(
+    `SELECT resource_key, spreadsheet_id, title FROM workspace_resources
+     WHERE project_id = ? AND resource_kind IN ('inbox_sheet', 'inbox_spreadsheet') AND status = 'active'
+     ORDER BY created_at ASC`
+  )
     .bind(projectId)
-    .first<{ spreadsheet_id: string }>();
+    .all<{ resource_key: string; spreadsheet_id: string; title: string }>();
 
-  let spreadsheetId = existing?.spreadsheet_id || '';
-  let existingTabs = new Set<string>();
-
-  if (spreadsheetId) {
-    const metaRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
-        spreadsheetId
-      )}?fields=spreadsheetId,sheets(properties(title))`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (metaRes.ok) {
-      const meta = (await metaRes.json()) as {
-        sheets?: Array<{ properties?: { title?: string } }>;
-      };
-      existingTabs = new Set(
-        (meta.sheets || []).map((s) => s.properties?.title || '').filter(Boolean)
-      );
-    } else {
-      spreadsheetId = '';
+  const existingByKey = new Map<string, string>();
+  for (const row of existingRows.results || []) {
+    if (row.resource_key && row.spreadsheet_id) {
+      existingByKey.set(row.resource_key, row.spreadsheet_id);
     }
   }
 
-  const desiredTitles = tables.map((t) => t.title).filter(Boolean);
-  if (!spreadsheetId) {
-    const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        properties: { title },
-        sheets: (desiredTitles.length > 0 ? desiredTitles : ['INBOX_REGISTRY']).map((t) => ({
-          properties: { title: t, gridProperties: { frozenRowCount: 1 } },
-        })),
-      }),
-    });
-    if (!createRes.ok) {
-      const txt = await createRes.text().catch(() => '');
-      throw new HierarchyServiceError(
-        `Could not create project Inbox spreadsheet (${createRes.status}): ${txt.slice(0, 160)}`,
-        502,
-        'SHEETS_CREATE_FAILED'
-      );
-    }
-    const created = (await createRes.json()) as { spreadsheetId: string };
-    spreadsheetId = created.spreadsheetId;
+  let bootSystemFolderId = '';
+  let bootRegistryFileId = '';
+  try {
+    const boot = await bootstrapAccountDrive(env, accessToken, ownerId, { operationId });
+    bootSystemFolderId = boot.systemFolderId;
+    bootRegistryFileId = boot.resourceRegistryFileId;
+  } catch {
+    // Non-fatal in minimal test mocks
+  }
 
-    if (dataInboxFolderId && spreadsheetId) {
-      await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-          spreadsheetId
-        )}?addParents=${encodeURIComponent(dataInboxFolderId)}&fields=id`,
-        {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
+  const datasetSpreadsheets: Record<string, string> = {};
+  const tabsSynced: string[] = [];
+  let primarySpreadsheetId = '';
+
+  for (const table of tables) {
+    const datasetKey = (table.title || '').trim();
+    if (!datasetKey) continue;
+
+    // Create only enabled/used datasets (rows present OR already provisioned)
+    let spreadsheetId = existingByKey.get(datasetKey) || '';
+    if (!spreadsheetId && (!Array.isArray(table.rows) || table.rows.length === 0)) {
+      continue;
     }
 
-    await upsertWorkspaceResource(db, {
-      ownerId,
-      orgId,
-      projectId,
-      resourceKind: 'inbox_spreadsheet',
-      resourceKey: 'default',
-      driveFileId: spreadsheetId,
-      spreadsheetId,
-      parentFolderId: dataInboxFolderId,
-      title,
-    });
-  } else {
-    const missingTabs = desiredTitles.filter((t) => !existingTabs.has(t));
-    if (missingTabs.length > 0) {
-      await fetch(
+    if (spreadsheetId) {
+      const metaRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
           spreadsheetId
-        )}:batchUpdate`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            requests: missingTabs.map((t) => ({
-              addSheet: { properties: { title: t, gridProperties: { frozenRowCount: 1 } } },
-            })),
-          }),
-        }
+        )}?fields=spreadsheetId,sheets(properties(title))`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
       );
+      if (metaRes.ok) {
+        const meta = (await metaRes.json()) as {
+          sheets?: Array<{ properties?: { title?: string } }>;
+        };
+        const tabSet = new Set((meta.sheets || []).map((s) => s.properties?.title || ''));
+        if (!tabSet.has(datasetKey)) {
+          await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+              spreadsheetId
+            )}:batchUpdate`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                requests: [
+                  { addSheet: { properties: { title: datasetKey, gridProperties: { frozenRowCount: 1 } } } },
+                ],
+              }),
+            }
+          );
+        }
+      } else {
+        spreadsheetId = '';
+      }
     }
-  }
 
-  const tabsSynced: string[] = [];
-  if (tables.length > 0 && spreadsheetId) {
+    const ssTitle = `${projectName} — Inbox ${datasetKey}`;
+    if (!spreadsheetId) {
+      const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          properties: { title: ssTitle },
+          sheets: [{ properties: { title: datasetKey, gridProperties: { frozenRowCount: 1 } } }],
+        }),
+      });
+      if (!createRes.ok) {
+        const txt = await createRes.text().catch(() => '');
+        throw new HierarchyServiceError(
+          `Could not create project Inbox dataset spreadsheet (${createRes.status}): ${txt.slice(0, 160)}`,
+          502,
+          'SHEETS_CREATE_FAILED'
+        );
+      }
+      const created = (await createRes.json()) as { spreadsheetId: string };
+      spreadsheetId = created.spreadsheetId;
+
+      if (dataInboxFolderId && spreadsheetId) {
+        await driveFetchWithRetry(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+            spreadsheetId
+          )}?addParents=${encodeURIComponent(dataInboxFolderId)}&fields=id,parents,appProperties`,
+          accessToken,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              appProperties: {
+                operation_id: operationId,
+                resource_id: `${projectId}:inbox:${datasetKey}`,
+                resource_type: 'inbox_sheet',
+                dataset_key: datasetKey,
+                org_id: orgId,
+                project_id: projectId,
+                schema_version: '1',
+              },
+            }),
+          },
+          { operationId }
+        );
+        await verifyDriveParent(accessToken, spreadsheetId, dataInboxFolderId, operationId).catch(
+          () => undefined
+        );
+      }
+
+      await upsertWorkspaceResource(env.DB, {
+        ownerId,
+        orgId,
+        projectId,
+        resourceKind: 'inbox_sheet',
+        resourceKey: datasetKey,
+        driveFileId: spreadsheetId,
+        spreadsheetId,
+        parentFolderId: dataInboxFolderId,
+        title: ssTitle,
+        lastOperationId: operationId,
+      });
+
+      if (bootSystemFolderId) {
+        await upsertCanonicalResourceRegistryEntry(accessToken, {
+          systemFolderId: bootSystemFolderId,
+          registryFileId: bootRegistryFileId || undefined,
+          ownerAccountId: ownerId,
+          operationId,
+          entry: {
+            resource_id: `wres_${projectId}_inbox_${datasetKey}`,
+            owner_type: 'project',
+            owner_id: ownerId,
+            org_id: orgId,
+            project_id: projectId,
+            site_id: null,
+            resource_type: 'inbox_sheet',
+            resource_key: datasetKey,
+            drive_file_id: spreadsheetId,
+            spreadsheet_id: spreadsheetId,
+            parent_folder_id: dataInboxFolderId,
+            title: ssTitle,
+            mime_type: 'application/vnd.google-apps.spreadsheet',
+            schema_version: 1,
+            status: 'active',
+          },
+        }).catch(() => undefined);
+      }
+    }
+
     const writeRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
         spreadsheetId
@@ -184,10 +280,12 @@ async function ensureAndSyncInboxSpreadsheet(params: {
         },
         body: JSON.stringify({
           valueInputOption: 'RAW',
-          data: tables.map((table) => ({
-            range: `'${table.title.replace(/'/g, "''")}'!A1`,
-            values: [table.headers, ...table.rows],
-          })),
+          data: [
+            {
+              range: `'${datasetKey.replace(/'/g, "''")}'!A1`,
+              values: [table.headers, ...table.rows],
+            },
+          ],
         }),
       }
     );
@@ -199,10 +297,13 @@ async function ensureAndSyncInboxSpreadsheet(params: {
         'SHEETS_WRITE_FAILED'
       );
     }
-    tables.forEach((t) => tabsSynced.push(t.title));
+
+    if (!primarySpreadsheetId) primarySpreadsheetId = spreadsheetId;
+    datasetSpreadsheets[datasetKey] = spreadsheetId;
+    tabsSynced.push(datasetKey);
   }
 
-  return { spreadsheetId, tabsSynced };
+  return { spreadsheetId: primarySpreadsheetId, datasetSpreadsheets, tabsSynced };
 }
 
 export async function handleGetProjectInbox(
@@ -212,12 +313,13 @@ export async function handleGetProjectInbox(
   projectId: string
 ): Promise<Response> {
   try {
-    await requireProjectAccess(env.DB, projectId, session.ownerId, [
+    const access = await requireProjectAccess(env.DB, projectId, session.ownerId, [
       'owner',
       'admin',
       'editor',
       'viewer',
     ]);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
 
     const sitesRows = await env.DB.prepare(
       `SELECT site_id, site_slug, site_name, status FROM sites WHERE project_id = ?`
@@ -276,14 +378,15 @@ export async function handleGetProjectInbox(
     }
 
     const resourceRows = await env.DB.prepare(
-      `SELECT resource_kind, drive_file_id, spreadsheet_id, title
+      `SELECT resource_kind, resource_key, drive_file_id, spreadsheet_id, title
        FROM workspace_resources
        WHERE project_id = ? AND status = 'active'
-         AND resource_kind IN ('data_inbox', 'inbox_state', 'inbox_spreadsheet')`
+         AND resource_kind IN ('data_inbox', 'inbox_state', 'inbox_sheet', 'inbox_spreadsheet')`
     )
       .bind(projectId)
       .all<{
         resource_kind: string;
+        resource_key: string;
         drive_file_id: string;
         spreadsheet_id: string;
         title: string;
@@ -293,26 +396,66 @@ export async function handleGetProjectInbox(
     const dataInboxFolderId =
       resources.find((r) => r.resource_kind === 'data_inbox')?.drive_file_id || '';
     const stateRow = resources.find((r) => r.resource_kind === 'inbox_state');
-    const sheetRow = resources.find((r) => r.resource_kind === 'inbox_spreadsheet');
+    const sheetRows = resources.filter(
+      (r) => r.resource_kind === 'inbox_sheet' || r.resource_kind === 'inbox_spreadsheet'
+    );
+    const datasetSpreadsheets: Record<string, string> = {};
+    for (const sr of sheetRows) {
+      if (sr.resource_key && sr.spreadsheet_id) {
+        datasetSpreadsheets[sr.resource_key] = sr.spreadsheet_id;
+      }
+    }
+    const primarySpreadsheetId = sheetRows[0]?.spreadsheet_id || '';
 
     let accessToken: string;
     try {
-      const minted = await mintOwnerGoogleAccessToken(env, session.ownerId);
+      const minted = await mintOwnerGoogleAccessToken(env, ownerAccountId);
       accessToken = minted.accessToken;
     } catch {
-      return Response.json({
-        ok: true,
-        projectId,
-        workspaceConnected: false,
-        folderId: dataInboxFolderId,
-        stateFileId: stateRow?.drive_file_id || '',
-        spreadsheetId: sheetRow?.spreadsheet_id || '',
-        sites: projectSites,
-        destinations,
-        deliveryLogs,
-        savedState: null,
-        remoteSubmissions: [] as RemoteSheetSubmission[],
+      const cached = await readManagementCache<{
+        stateFileId?: string;
+        spreadsheetId?: string;
+        datasetSpreadsheets?: Record<string, string>;
+        savedState?: Record<string, unknown> | null;
+        remoteSubmissions?: RemoteSheetSubmission[];
+      }>(env.DB, {
+        ownerId: ownerAccountId,
+        resourceType: 'inbox_state',
+        resourceId: projectId,
       });
+
+      if (cached) {
+        return Response.json({
+          ok: true,
+          projectId,
+          workspaceConnected: false,
+          readOnly: true,
+          stale: true,
+          lastSyncedAt: cached.lastSyncedAt,
+          folderId: dataInboxFolderId,
+          stateFileId: cached.payload.stateFileId || stateRow?.drive_file_id || '',
+          spreadsheetId: cached.payload.spreadsheetId || primarySpreadsheetId,
+          datasetSpreadsheets: cached.payload.datasetSpreadsheets || datasetSpreadsheets,
+          sites: projectSites,
+          destinations,
+          deliveryLogs,
+          savedState: cached.payload.savedState || null,
+          remoteSubmissions: cached.payload.remoteSubmissions || [],
+        });
+      }
+
+      return Response.json(
+        {
+          ok: false,
+          projectId,
+          workspaceConnected: false,
+          readOnly: true,
+          unavailable: true,
+          error: 'Google Workspace connection is unavailable and no cached Inbox snapshot exists.',
+          code: 'WRITE_DISABLED_OAUTH_UNAVAILABLE',
+        },
+        { status: 503 }
+      );
     }
 
     let stateFileId = stateRow?.drive_file_id || '';
@@ -347,8 +490,6 @@ export async function handleGetProjectInbox(
         if (!res.ok) continue;
         const json = (await res.json()) as { values?: string[][] };
         const rows = json.values || [];
-        // Row format written by publicRuntime.ts:
-        // [submissionId, nowIso, name, email, phone, messageOrJson, sourcePage]
         const startIdx =
           rows[0]?.[0]?.toLowerCase().includes('submission') ||
           rows[0]?.[0]?.toLowerCase() === 'id'
@@ -399,13 +540,32 @@ export async function handleGetProjectInbox(
       }
     }
 
+    const syncedCache = await writeManagementCache(env.DB, {
+      ownerId: ownerAccountId,
+      resourceType: 'inbox_state',
+      resourceId: projectId,
+      canonicalRevision: Number((savedState as { revision?: number } | null)?.revision ?? 1),
+      payload: {
+        stateFileId,
+        spreadsheetId: primarySpreadsheetId,
+        datasetSpreadsheets,
+        savedState,
+        remoteSubmissions,
+      },
+      ttlSeconds: 3600,
+    }).catch(() => null);
+
     return Response.json({
       ok: true,
       projectId,
       workspaceConnected: true,
+      readOnly: false,
+      stale: false,
+      lastSyncedAt: syncedCache?.lastSyncedAt || new Date().toISOString(),
       folderId: dataInboxFolderId,
       stateFileId,
-      spreadsheetId: sheetRow?.spreadsheet_id || '',
+      spreadsheetId: primarySpreadsheetId,
+      datasetSpreadsheets,
       sites: projectSites,
       destinations,
       deliveryLogs,
@@ -424,7 +584,11 @@ export async function handleSyncProjectInbox(
   projectId: string
 ): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as {
+    operationId?: string;
+    expectedRevision?: number;
+    expectedEtag?: string;
     inboxState?: {
+      revision?: number;
       inboxSubmissions?: unknown[];
       inboxCategories?: unknown[];
       inboxNotes?: unknown[];
@@ -443,81 +607,200 @@ export async function handleSyncProjectInbox(
     );
   }
 
+  const operationId =
+    body.operationId?.trim() ||
+    request.headers.get('Idempotency-Key')?.trim() ||
+    generateOperationId('op_inb');
+  const expectedEtag = body.expectedEtag || request.headers.get('If-Match')?.trim() || undefined;
+
   try {
     const access = await requireProjectAccess(env.DB, projectId, session.ownerId, [
       'owner',
       'admin',
       'editor',
     ]);
-    const tree = await ensureProjectDriveTree(env, session, projectId);
-    const { accessToken } = await mintOwnerGoogleAccessToken(env, session.ownerId);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
 
-    const dataInboxFolderId =
-      tree.folders.data_inbox ||
-      (await ensureFolderSegment(accessToken, tree.folders.data_root, 'Inbox')).id;
-
-    const nowIso = new Date().toISOString();
-    const statePayload = {
-      schemaVersion: 1,
-      projectId,
-      updatedAt: nowIso,
-      forms: Array.isArray(body.inboxState.forms) ? body.inboxState.forms : [],
-      inboxCategories: Array.isArray(body.inboxState.inboxCategories)
-        ? body.inboxState.inboxCategories
-        : [],
-      inboxSubmissions: Array.isArray(body.inboxState.inboxSubmissions)
-        ? body.inboxState.inboxSubmissions
-        : [],
-      inboxNotes: Array.isArray(body.inboxState.inboxNotes) ? body.inboxState.inboxNotes : [],
-      inboxActivities: Array.isArray(body.inboxState.inboxActivities)
-        ? body.inboxState.inboxActivities
-        : [],
-    };
-
-    const savedStateFile = await writeJsonFileInFolder(
-      accessToken,
-      dataInboxFolderId,
-      INBOX_STATE_FILENAME,
-      statePayload
-    );
-
-    await upsertWorkspaceResource(env.DB, {
-      ownerId: access.project.owner_id,
-      orgId: access.project.org_id,
-      projectId,
-      resourceKind: 'inbox_state',
-      resourceKey: 'default',
-      driveFileId: savedStateFile.fileId,
-      parentFolderId: dataInboxFolderId,
-      title: INBOX_STATE_FILENAME,
-    });
-
-    let spreadsheetId = '';
-    let tabsSynced: string[] = [];
-    if (body.syncSheets && Array.isArray(body.tables) && body.tables.length > 0) {
-      const sheetRes = await ensureAndSyncInboxSpreadsheet({
-        db: env.DB,
-        accessToken,
-        ownerId: access.project.owner_id,
-        orgId: access.project.org_id,
-        projectId,
-        dataInboxFolderId,
-        title: (body.title || `Builly Inbox — ${access.project.name}`).trim(),
-        tables: body.tables,
-      });
-      spreadsheetId = sheetRes.spreadsheetId;
-      tabsSynced = sheetRes.tabsSynced;
+    let accessToken: string;
+    try {
+      const minted = await mintOwnerGoogleAccessToken(env, ownerAccountId);
+      accessToken = minted.accessToken;
+    } catch {
+      throw new BuillyTransactionError(
+        'WRITE_DISABLED_OAUTH_UNAVAILABLE',
+        'Google Workspace connection is unavailable. Inbox writes are disabled in read-only mode.',
+        { operationId, status: 503, retryable: false }
+      );
     }
 
-    return Response.json({
-      ok: true,
-      projectId,
-      folderId: dataInboxFolderId,
-      stateFileId: savedStateFile.fileId,
-      spreadsheetId,
-      tabsSynced,
-      syncedAt: nowIso,
-    });
+    return await withMutationLock(
+      env,
+      { scopeKey: `project:${projectId}`, operationId },
+      async (lock) => {
+        const tree = await ensureProjectDriveTree(env, session, projectId, {
+          operationId,
+          accessTokenOverride: accessToken,
+        });
+
+        const dataInboxFolderId =
+          tree.folders.data_inbox ||
+          (
+            await ensureFolderSegment(accessToken, tree.folders.data_root, 'Inbox', {
+              operationId,
+              resourceId: `${projectId}:data_inbox`,
+              resourceType: 'data_inbox',
+            })
+          ).id;
+
+        const existingStateRes = await env.DB.prepare(
+          `SELECT drive_file_id FROM workspace_resources
+           WHERE project_id = ? AND resource_kind = 'inbox_state' AND resource_key = 'default' AND status = 'active'
+           LIMIT 1`
+        )
+          .bind(projectId)
+          .first<{ drive_file_id: string }>();
+
+        let knownStateId = existingStateRes?.drive_file_id || '';
+        let currentRevision: number | undefined;
+        let currentEtag: string | undefined = expectedEtag;
+
+        if (knownStateId) {
+          try {
+            const read = await readDriveJsonWithConcurrency<{ revision?: number }>(
+              accessToken,
+              knownStateId,
+              operationId
+            );
+            currentRevision = Number(read.data?.revision ?? 0);
+            currentEtag = currentEtag || read.meta.etag;
+          } catch {
+            knownStateId = '';
+          }
+        }
+
+        if (
+          body.expectedRevision !== undefined &&
+          currentRevision !== undefined &&
+          currentRevision !== body.expectedRevision
+        ) {
+          throw new BuillyTransactionError(
+            'REVISION_CONFLICT',
+            `Inbox state revision conflict: expected ${body.expectedRevision}, found ${currentRevision}.`,
+            {
+              operationId,
+              details: {
+                resourceId: `${projectId}:inbox_state`,
+                expectedRevision: body.expectedRevision,
+                actualRevision: currentRevision,
+              },
+            }
+          );
+        }
+
+        await lock.verify();
+
+        const nowIso = new Date().toISOString();
+        const nextRevision =
+          currentRevision !== undefined
+            ? currentRevision + 1
+            : Number(body.inboxState!.revision || 1);
+
+        const statePayload = {
+          schemaVersion: 1,
+          revision: nextRevision,
+          projectId,
+          lastOperationId: operationId,
+          updatedAt: nowIso,
+          forms: Array.isArray(body.inboxState!.forms) ? body.inboxState!.forms : [],
+          inboxCategories: Array.isArray(body.inboxState!.inboxCategories)
+            ? body.inboxState!.inboxCategories
+            : [],
+          inboxSubmissions: Array.isArray(body.inboxState!.inboxSubmissions)
+            ? body.inboxState!.inboxSubmissions
+            : [],
+          inboxNotes: Array.isArray(body.inboxState!.inboxNotes) ? body.inboxState!.inboxNotes : [],
+          inboxActivities: Array.isArray(body.inboxState!.inboxActivities)
+            ? body.inboxState!.inboxActivities
+            : [],
+        };
+
+        const savedStateFile = await writeJsonFileInFolder(
+          accessToken,
+          dataInboxFolderId,
+          INBOX_STATE_FILENAME,
+          statePayload,
+          {
+            operationId,
+            resourceId: `${projectId}:inbox_state`,
+            resourceType: 'inbox_state',
+            knownFileId: knownStateId || undefined,
+            expectedRevision: body.expectedRevision,
+            expectedEtag: currentEtag,
+          }
+        );
+
+        await upsertWorkspaceResource(env.DB, {
+          ownerId: ownerAccountId,
+          orgId: access.project.org_id,
+          projectId,
+          resourceKind: 'inbox_state',
+          resourceKey: 'default',
+          driveFileId: savedStateFile.fileId,
+          parentFolderId: dataInboxFolderId,
+          title: INBOX_STATE_FILENAME,
+          canonicalRevision: nextRevision,
+          lastOperationId: operationId,
+        });
+
+        let spreadsheetId = '';
+        let datasetSpreadsheets: Record<string, string> = {};
+        let tabsSynced: string[] = [];
+        if (body.syncSheets && Array.isArray(body.tables) && body.tables.length > 0) {
+          const sheetRes = await ensureAndSyncInboxDatasets({
+            env,
+            accessToken,
+            ownerId: ownerAccountId,
+            orgId: access.project.org_id,
+            projectId,
+            projectName: access.project.name,
+            dataInboxFolderId,
+            tables: body.tables,
+            operationId,
+          });
+          spreadsheetId = sheetRes.spreadsheetId;
+          datasetSpreadsheets = sheetRes.datasetSpreadsheets;
+          tabsSynced = sheetRes.tabsSynced;
+        }
+
+        await writeManagementCache(env.DB, {
+          ownerId: ownerAccountId,
+          resourceType: 'inbox_state',
+          resourceId: projectId,
+          canonicalRevision: nextRevision,
+          payload: {
+            stateFileId: savedStateFile.fileId,
+            spreadsheetId,
+            datasetSpreadsheets,
+            savedState: statePayload,
+            remoteSubmissions: [],
+          },
+          ttlSeconds: 3600,
+        }).catch(() => undefined);
+
+        return Response.json({
+          ok: true,
+          operationId,
+          revision: nextRevision,
+          projectId,
+          folderId: dataInboxFolderId,
+          stateFileId: savedStateFile.fileId,
+          spreadsheetId,
+          datasetSpreadsheets,
+          tabsSynced,
+          syncedAt: nowIso,
+        });
+      }
+    );
   } catch (err) {
     return mapInboxError(err);
   }

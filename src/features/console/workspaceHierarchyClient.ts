@@ -3,13 +3,18 @@ import {
   CompleteOnboardingInput,
   CompleteOnboardingResponse,
   ConsoleBootstrapResponse,
+  D1RebuildSummary,
+  DatasetSpreadsheetRef,
   LegacyMigrationCleanupResult,
   LegacyMigrationExecuteInput,
   LegacyMigrationExecuteResult,
   LegacyMigrationPlan,
   OnboardingInspectionResult,
   OnboardingLocalContext,
+  OperationJournalRecord,
+  OperationRecoveryResult,
   OrganizationRecord,
+  ProjectionRepairRecord,
   ProjectDriveFileEntry,
   ProjectDriveFolderKind,
   ProjectDriveProvisionResponse,
@@ -170,12 +175,25 @@ async function requestConsoleJson<T>(
     );
   }
 
-  const payload = (await res.json()) as T & { error?: string; code?: string };
+  const payload = (await res.json()) as T & {
+    error?: string;
+    code?: string;
+    operationId?: string;
+    retryable?: boolean;
+    projectionStatus?: string;
+    details?: Record<string, unknown>;
+  };
   if (!res.ok) {
     throw new WorkerApiError(
       payload.error || `Console API request failed (${res.status}).`,
       res.status,
-      payload.code || 'CONSOLE_API_ERROR'
+      payload.code || 'CONSOLE_API_ERROR',
+      {
+        operationId: payload.operationId,
+        retryable: payload.retryable,
+        projectionStatus: payload.projectionStatus,
+        details: payload.details,
+      }
     );
   }
 
@@ -243,15 +261,51 @@ export const workspaceHierarchyClient = {
   updateOrganization(
     accessToken: string,
     orgId: string,
-    input: { name: string }
-  ): Promise<{ ok: boolean; organization: OrganizationRecord }> {
+    input: { name: string; expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; deduplicated?: boolean; operationId?: string; organization: OrganizationRecord }> {
+    const opKey = input.operationId || createOperationKey('org_upd');
     return requestConsoleJson(
       `/api/console/organizations/${encodeURIComponent(orgId)}`,
       accessToken,
       {
         method: 'PATCH',
-        body: JSON.stringify(input),
-      }
+        body: JSON.stringify({ ...input, operationId: opKey }),
+      },
+      opKey
+    );
+  },
+
+  archiveOrganization(
+    accessToken: string,
+    orgId: string,
+    input?: { expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; organization: OrganizationRecord }> {
+    const opKey = input?.operationId || createOperationKey('org_arch');
+    return requestConsoleJson(
+      `/api/console/organizations/${encodeURIComponent(orgId)}/archive`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({ ...(input || {}), operationId: opKey }),
+      },
+      opKey
+    );
+  },
+
+  deleteOrganization(
+    accessToken: string,
+    orgId: string,
+    input: { confirmPermanentDelete: boolean; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; deletedOrgId: string }> {
+    const opKey = input.operationId || createOperationKey('org_del');
+    return requestConsoleJson(
+      `/api/console/organizations/${encodeURIComponent(orgId)}`,
+      accessToken,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ confirmPermanentDelete: input.confirmPermanentDelete, operationId: opKey }),
+      },
+      opKey
     );
   },
 
@@ -267,6 +321,7 @@ export const workspaceHierarchyClient = {
   ): Promise<{
     ok: boolean;
     deduplicated?: boolean;
+    operationId?: string;
     project: ProjectRecord;
     modules: ProjectModuleRecord[];
   }> {
@@ -285,30 +340,73 @@ export const workspaceHierarchyClient = {
   updateProject(
     accessToken: string,
     projectId: string,
-    input: { name?: string; description?: string }
-  ): Promise<{ ok: boolean; project: ProjectRecord }> {
+    input: { name?: string; description?: string; expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; deduplicated?: boolean; operationId?: string; project: ProjectRecord }> {
+    const opKey = input.operationId || createOperationKey('prj_upd');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}`,
       accessToken,
       {
         method: 'PATCH',
-        body: JSON.stringify(input),
-      }
+        body: JSON.stringify({ ...input, operationId: opKey }),
+      },
+      opKey
+    );
+  },
+
+  archiveProject(
+    accessToken: string,
+    projectId: string,
+    input?: { expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; project: ProjectRecord }> {
+    const opKey = input?.operationId || createOperationKey('prj_arch');
+    return requestConsoleJson(
+      `/api/console/projects/${encodeURIComponent(projectId)}/archive`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({ ...(input || {}), operationId: opKey }),
+      },
+      opKey
+    );
+  },
+
+  deleteProject(
+    accessToken: string,
+    projectId: string,
+    input: { confirmPermanentDelete: boolean; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; deletedProjectId: string }> {
+    const opKey = input.operationId || createOperationKey('prj_del');
+    return requestConsoleJson(
+      `/api/console/projects/${encodeURIComponent(projectId)}`,
+      accessToken,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ confirmPermanentDelete: input.confirmPermanentDelete, operationId: opKey }),
+      },
+      opKey
     );
   },
 
   updateProjectModules(
     accessToken: string,
     projectId: string,
-    modules: Array<{ moduleKey: ProjectModuleKey; enabled: boolean }>
-  ): Promise<{ ok: boolean; modules: ProjectModuleRecord[] }> {
+    modules: Array<{ moduleKey: ProjectModuleKey; enabled: boolean }>,
+    options?: { expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; revision?: number; modules: ProjectModuleRecord[] }> {
+    const opKey = options?.operationId || createOperationKey('mod');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/modules`,
       accessToken,
       {
         method: 'PATCH',
-        body: JSON.stringify({ modules }),
-      }
+        body: JSON.stringify({
+          modules,
+          ...(options?.expectedRevision !== undefined ? { expectedRevision: options.expectedRevision } : {}),
+          operationId: opKey,
+        }),
+      },
+      opKey
     );
   },
 
@@ -316,7 +414,7 @@ export const workspaceHierarchyClient = {
     accessToken: string,
     projectId: string,
     input: { siteName: string; siteSlug: string; operationKey?: string }
-  ): Promise<{ ok: boolean; deduplicated?: boolean; site: SiteRecord }> {
+  ): Promise<{ ok: boolean; deduplicated?: boolean; operationId?: string; site: SiteRecord }> {
     const opKey = input.operationKey || createOperationKey('site');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/sites`,
@@ -332,15 +430,17 @@ export const workspaceHierarchyClient = {
   updateSiteInProject(
     accessToken: string,
     siteId: string,
-    input: { siteName?: string; siteSlug?: string }
-  ): Promise<{ ok: boolean; site: SiteRecord }> {
+    input: { siteName?: string; siteSlug?: string; expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; site: SiteRecord }> {
+    const opKey = input.operationId || createOperationKey('site_upd');
     return requestConsoleJson(
       `/api/console/sites/${encodeURIComponent(siteId)}`,
       accessToken,
       {
         method: 'PATCH',
-        body: JSON.stringify(input),
-      }
+        body: JSON.stringify({ ...input, operationId: opKey }),
+      },
+      opKey
     );
   },
 
@@ -434,10 +534,16 @@ export const workspaceHierarchyClient = {
     ok: boolean;
     projectId: string;
     workspaceConnected: boolean;
+    readOnly?: boolean;
+    stale?: boolean;
+    unavailable?: boolean;
+    lastSyncedAt?: string | null;
     found: boolean;
     folderId: string;
     manifestFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
+    revision?: number;
     document: Partial<CmsDocument> | null;
   }> {
     const includeDoc = options?.includeDocument === false ? '0' : '1';
@@ -452,6 +558,9 @@ export const workspaceHierarchyClient = {
     accessToken: string,
     projectId: string,
     params: {
+      operationId?: string;
+      expectedRevision?: number;
+      expectedEtag?: string;
       document: CmsDocument;
       syncSheets?: boolean;
       title?: string;
@@ -459,22 +568,27 @@ export const workspaceHierarchyClient = {
     }
   ): Promise<{
     ok: boolean;
+    operationId?: string;
+    revision?: number;
     projectId: string;
     folderId: string;
     richContentFolderId: string;
     manifestFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
     tabsSynced: string[];
     syncedAt: string;
     richDocs?: CmsDocument['richDocs'];
   }> {
+    const opKey = params.operationId || createOperationKey('cms');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/cms/save`,
       accessToken,
       {
         method: 'POST',
-        body: JSON.stringify(params),
-      }
+        body: JSON.stringify({ ...params, operationId: opKey }),
+      },
+      opKey
     );
   },
 
@@ -485,9 +599,15 @@ export const workspaceHierarchyClient = {
     ok: boolean;
     projectId: string;
     workspaceConnected: boolean;
+    readOnly?: boolean;
+    stale?: boolean;
+    unavailable?: boolean;
+    lastSyncedAt?: string | null;
+    revision?: number;
     folderId: string;
     stateFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
     sites: Array<{ site_id: string; site_slug: string; site_name: string; status: string }>;
     destinations: Array<{
       id: string;
@@ -542,6 +662,9 @@ export const workspaceHierarchyClient = {
     accessToken: string,
     projectId: string,
     params: {
+      operationId?: string;
+      expectedRevision?: number;
+      expectedEtag?: string;
       inboxState: {
         inboxSubmissions: InboxSubmission[];
         inboxCategories: InboxCategory[];
@@ -555,20 +678,25 @@ export const workspaceHierarchyClient = {
     }
   ): Promise<{
     ok: boolean;
+    operationId?: string;
+    revision?: number;
     projectId: string;
     folderId: string;
     stateFileId: string;
     spreadsheetId: string;
+    datasetSpreadsheets?: DatasetSpreadsheetRef[];
     tabsSynced: string[];
     syncedAt: string;
   }> {
+    const opKey = params.operationId || createOperationKey('inb');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/inbox/sync`,
       accessToken,
       {
         method: 'POST',
-        body: JSON.stringify(params),
-      }
+        body: JSON.stringify({ ...params, operationId: opKey }),
+      },
+      opKey
     );
   },
 
@@ -579,6 +707,11 @@ export const workspaceHierarchyClient = {
     ok: boolean;
     projectId: string;
     workspaceConnected: boolean;
+    readOnly?: boolean;
+    stale?: boolean;
+    unavailable?: boolean;
+    lastSyncedAt?: string | null;
+    revision?: number;
     folderId: string;
     manifestFileId: string;
     assets: MediaAsset[];
@@ -594,6 +727,8 @@ export const workspaceHierarchyClient = {
     accessToken: string,
     projectId: string,
     params: {
+      operationId?: string;
+      expectedRevision?: number;
       name: string;
       mimeType: string;
       category: string;
@@ -607,30 +742,42 @@ export const workspaceHierarchyClient = {
     }
   ): Promise<{
     ok: boolean;
+    operationId?: string;
+    revision?: number;
     projectId: string;
     folderId: string;
     manifestFileId: string;
     asset: MediaAsset;
   }> {
+    const opKey = params.operationId || createOperationKey('ast_up');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/assets/upload`,
       accessToken,
       {
         method: 'POST',
-        body: JSON.stringify(params),
-      }
+        body: JSON.stringify({ ...params, operationId: opKey }),
+      },
+      opKey
     );
   },
 
   deleteProjectAsset(
     accessToken: string,
     projectId: string,
-    assetId: string
-  ): Promise<{ ok: boolean; projectId: string; deletedId: string; manifestFileId: string }> {
+    assetId: string,
+    options?: { expectedRevision?: number; operationId?: string }
+  ): Promise<{ ok: boolean; operationId?: string; revision?: number; projectId: string; deletedId: string; manifestFileId: string }> {
+    const opKey = options?.operationId || createOperationKey('ast_del');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`,
       accessToken,
-      { method: 'DELETE' }
+      {
+        method: 'DELETE',
+        ...(options?.expectedRevision !== undefined
+          ? { body: JSON.stringify({ expectedRevision: options.expectedRevision, operationId: opKey }) }
+          : {}),
+      },
+      opKey
     );
   },
 
@@ -674,24 +821,94 @@ export const workspaceHierarchyClient = {
     accessToken: string,
     projectId: string,
     params: {
+      operationId?: string;
       fileName: string;
       manifest: Record<string, unknown>;
       snapshot?: Record<string, unknown>;
     }
   ): Promise<{
     ok: boolean;
+    operationId?: string;
     projectId: string;
     folderId: string;
     fileId: string;
     fileName: string;
     savedAt: string;
   }> {
+    const opKey = params.operationId || createOperationKey('exp');
     return requestConsoleJson(
       `/api/console/projects/${encodeURIComponent(projectId)}/exports`,
       accessToken,
       {
         method: 'POST',
-        body: JSON.stringify(params),
+        body: JSON.stringify({ ...params, operationId: opKey }),
+      },
+      opKey
+    );
+  },
+
+  rebuildProjection(
+    accessToken: string,
+    options?: { selectedRootFolderId?: string; operationId?: string }
+  ): Promise<D1RebuildSummary> {
+    const opKey = options?.operationId || createOperationKey('rebuild');
+    return requestConsoleJson<D1RebuildSummary>(
+      '/api/console/rebuild-projection',
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify(options?.selectedRootFolderId ? { selectedRootFolderId: options.selectedRootFolderId } : {}),
+      },
+      opKey
+    );
+  },
+
+  listRepairQueue(
+    accessToken: string
+  ): Promise<{ ok: boolean; repairs: ProjectionRepairRecord[] }> {
+    return requestConsoleJson('/api/console/repair-queue', accessToken, { method: 'GET' });
+  },
+
+  processRepairQueue(
+    accessToken: string
+  ): Promise<{ ok: boolean; processed: number; completed: number; failed: number }> {
+    const opKey = createOperationKey('rep_proc');
+    return requestConsoleJson(
+      '/api/console/repair-queue/process',
+      accessToken,
+      { method: 'POST', body: JSON.stringify({}) },
+      opKey
+    );
+  },
+
+  listOperations(
+    accessToken: string
+  ): Promise<{ ok: boolean; operations: OperationJournalRecord[] }> {
+    return requestConsoleJson('/api/console/operations', accessToken, { method: 'GET' });
+  },
+
+  getOperation(
+    accessToken: string,
+    operationId: string
+  ): Promise<{ ok: boolean; operation: OperationJournalRecord }> {
+    return requestConsoleJson(
+      `/api/console/operations/${encodeURIComponent(operationId)}`,
+      accessToken,
+      { method: 'GET' }
+    );
+  },
+
+  recoverOperation(
+    accessToken: string,
+    operationId: string,
+    options?: { selectedRootFolderId?: string }
+  ): Promise<OperationRecoveryResult> {
+    return requestConsoleJson<OperationRecoveryResult>(
+      `/api/console/operations/${encodeURIComponent(operationId)}/recover`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify(options?.selectedRootFolderId ? { selectedRootFolderId: options.selectedRootFolderId } : {}),
       }
     );
   },

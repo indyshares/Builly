@@ -12,6 +12,7 @@ import {
   Music,
   RefreshCw,
   Search,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Type,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ProjectModuleHeader } from '../../components/console/ProjectModuleHeader';
+import { WorkerApiError } from '../../features/workspace-connection/workspaceApiClient';
 import { workspaceHierarchyClient } from '../../features/console/workspaceHierarchyClient';
 import {
   AgentAssetCandidate,
@@ -42,6 +44,9 @@ interface ProjectAssetsPageProps {
   accessToken: string;
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   authBusy: boolean;
   onNavigate: (to: string, options?: { replace?: boolean }) => void;
   onSignOut: () => Promise<void>;
@@ -77,6 +82,9 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
   accessToken,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   authBusy,
   onNavigate,
   onSignOut,
@@ -96,6 +104,11 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [remoteManifestId, setRemoteManifestId] = useState('');
+  const [remoteRevision, setRemoteRevision] = useState<number | undefined>(undefined);
+  const [remoteReadOnly, setRemoteReadOnly] = useState(readOnly);
+  const [remoteStale, setRemoteStale] = useState(outageStale);
+  const [remoteUnavailable, setRemoteUnavailable] = useState(false);
+  const [remoteLastSyncedAt, setRemoteLastSyncedAt] = useState<string | null>(outageLastSyncedAt);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -114,22 +127,34 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
   const loadRemoteAssets = useCallback(async () => {
     if (!accessToken) return;
     setIsLoadingRemote(true);
+    setRemoteUnavailable(false);
     try {
       const res = await workspaceHierarchyClient.listProjectAssets(
         accessToken,
         project.project_id
       );
       setRemoteManifestId(res.manifestFileId || '');
+      setRemoteRevision(res.revision);
+      setRemoteReadOnly(Boolean(readOnly || res.readOnly));
+      setRemoteStale(Boolean(outageStale || res.stale));
+      setRemoteLastSyncedAt(res.lastSyncedAt ?? outageLastSyncedAt ?? null);
       if (res.assets && res.assets.length > 0) {
         const merged = assetRepository.mergeRemoteAssets(project.project_id, res.assets);
         setAssets(merged);
       }
     } catch (err) {
+      if (
+        err instanceof WorkerApiError &&
+        (err.status === 503 || err.code === 'WRITE_DISABLED_OAUTH_UNAVAILABLE')
+      ) {
+        setRemoteUnavailable(true);
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Unable to list Project Drive assets.');
     } finally {
       setIsLoadingRemote(false);
     }
-  }, [accessToken, project.project_id]);
+  }, [accessToken, project.project_id, readOnly, outageStale, outageLastSyncedAt]);
 
   useEffect(() => {
     void loadRemoteAssets();
@@ -168,11 +193,25 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
     [assets]
   );
 
-  const canUploadRemote = Boolean(googleWorkspaceConnected && !googleWorkspaceNeedsReauth && accessToken);
+  const authenticatedOutage = Boolean(
+    readOnly ||
+      remoteReadOnly ||
+      remoteUnavailable ||
+      project.status === 'archived' ||
+      (accessToken && (!googleWorkspaceConnected || googleWorkspaceNeedsReauth))
+  );
+  const canUploadRemote = Boolean(
+    googleWorkspaceConnected && !googleWorkspaceNeedsReauth && accessToken && !authenticatedOutage
+  );
 
   const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    if (authenticatedOutage) {
+      setErrorBanner(t('console.outage.readOnlyDesc'));
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     setErrorBanner(null);
     setNotice(null);
     setIsUploading(true);
@@ -196,41 +235,46 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
             const remoteRes = await workspaceHierarchyClient.uploadProjectAsset(
               accessToken,
               project.project_id,
-              {
-                name: validated.name,
-                mimeType: validated.mimeType || 'image/png',
-                category: validated.category || 'images',
-                altText: validated.altText,
-                licenseNote: validated.licenseNote,
-                sourceOrigin: validated.sourceOrigin,
-                tags: validated.tags,
-                dimensions: validated.dimensions,
-                svgMarkup: validated.svgMarkup,
-                base64Data,
+                {
+                  ...(remoteRevision !== undefined ? { expectedRevision: remoteRevision } : {}),
+                  name: validated.name,
+                  mimeType: validated.mimeType || 'image/png',
+                  category: validated.category || 'images',
+                  altText: validated.altText,
+                  licenseNote: validated.licenseNote,
+                  sourceOrigin: validated.sourceOrigin,
+                  tags: validated.tags,
+                  dimensions: validated.dimensions,
+                  svgMarkup: validated.svgMarkup,
+                  base64Data,
+                }
+              );
+              if (remoteRes.revision !== undefined) setRemoteRevision(remoteRes.revision);
+              const mergedAsset: MediaAsset = {
+                ...remoteRes.asset,
+                url: validated.svgMarkup
+                  ? validated.url
+                  : validated.url || remoteRes.asset.url,
+              };
+              const next = assetRepository.addAsset(project.project_id, mergedAsset);
+              setAssets(next);
+              setSelectedAssetId(mergedAsset.id);
+              setRemoteManifestId(remoteRes.manifestFileId || '');
+              setNotice(t('console.assets.uploadedDriveSuccess', { name: mergedAsset.name }));
+            } catch (uploadErr) {
+              if (uploadErr instanceof WorkerApiError && uploadErr.status === 503) {
+                setRemoteReadOnly(true);
               }
-            );
-            const mergedAsset: MediaAsset = {
-              ...remoteRes.asset,
-              url: validated.svgMarkup
-                ? validated.url
-                : validated.url || remoteRes.asset.url,
-            };
-            const next = assetRepository.addAsset(project.project_id, mergedAsset);
+              setErrorBanner(
+                uploadErr instanceof Error ? uploadErr.message : 'Drive asset upload failed.'
+              );
+            }
+          } else if (!accessToken) {
+            const next = assetRepository.addAsset(project.project_id, validated);
             setAssets(next);
-            setSelectedAssetId(mergedAsset.id);
-            setRemoteManifestId(remoteRes.manifestFileId || '');
-            setNotice(t('console.assets.uploadedDriveSuccess', { name: mergedAsset.name }));
-          } catch (uploadErr) {
-            setErrorBanner(
-              uploadErr instanceof Error ? uploadErr.message : 'Drive asset upload failed.'
-            );
+            setSelectedAssetId(validated.id);
+            setNotice(t('console.assets.savedLocalSuccess', { name: validated.name }));
           }
-        } else {
-          const next = assetRepository.addAsset(project.project_id, validated);
-          setAssets(next);
-          setSelectedAssetId(validated.id);
-          setNotice(t('console.assets.savedLocalSuccess', { name: validated.name }));
-        }
       }
     } finally {
       setIsUploading(false);
@@ -244,6 +288,10 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
   };
 
   const handleApproveVectorCandidate = async (candidate: AgentAssetCandidate) => {
+    if (authenticatedOutage) {
+      setErrorBanner(t('console.outage.readOnlyDesc'));
+      return;
+    }
     setErrorBanner(null);
     const localRes = createAssetFromAgentCandidate(candidate);
     if (localRes.error || !localRes.asset) {
@@ -258,6 +306,7 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
           accessToken,
           project.project_id,
           {
+            ...(remoteRevision !== undefined ? { expectedRevision: remoteRevision } : {}),
             name: created.name,
             mimeType: 'image/svg+xml',
             category: created.category || vectorCategory,
@@ -268,15 +317,19 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
             svgMarkup: created.svgMarkup,
           }
         );
+        if (remoteRes.revision !== undefined) setRemoteRevision(remoteRes.revision);
         const merged = { ...remoteRes.asset, url: created.url };
         setAssets(assetRepository.addAsset(project.project_id, merged));
         setSelectedAssetId(merged.id);
         setNotice(t('console.assets.uploadedDriveSuccess', { name: merged.name }));
       } catch (err) {
+        if (err instanceof WorkerApiError && err.status === 503) {
+          setRemoteReadOnly(true);
+        }
         setErrorBanner(err instanceof Error ? err.message : 'Failed to save SVG to Drive.');
         return;
       }
-    } else {
+    } else if (!accessToken) {
       setAssets(assetRepository.addAsset(project.project_id, created));
       setSelectedAssetId(created.id);
       setNotice(t('console.assets.savedLocalSuccess', { name: created.name }));
@@ -287,6 +340,10 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!confirmDeleteAsset) return;
+    if (authenticatedOutage) {
+      setErrorBanner(t('console.outage.readOnlyDesc'));
+      return;
+    }
     setIsDeleting(true);
     setErrorBanner(null);
     try {
@@ -297,11 +354,13 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
         !confirmDeleteAsset.driveFileId.startsWith('drv_agent_');
 
       if (isRemote) {
-        await workspaceHierarchyClient.deleteProjectAsset(
+        const delRes = await workspaceHierarchyClient.deleteProjectAsset(
           accessToken,
           project.project_id,
-          confirmDeleteAsset.id
+          confirmDeleteAsset.id,
+          { ...(remoteRevision !== undefined ? { expectedRevision: remoteRevision } : {}) }
         );
+        if (delRes.revision !== undefined) setRemoteRevision(delRes.revision);
       }
 
       const remaining = assetRepository.deleteAsset(project.project_id, confirmDeleteAsset.id);
@@ -312,6 +371,9 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
       setNotice(t('console.assets.deletedToast', { name: confirmDeleteAsset.name }));
       setConfirmDeleteAsset(null);
     } catch (err) {
+      if (err instanceof WorkerApiError && err.status === 503) {
+        setRemoteReadOnly(true);
+      }
       setErrorBanner(err instanceof Error ? err.message : 'Failed to delete asset.');
     } finally {
       setIsDeleting(false);
@@ -392,7 +454,7 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
             </button>
             <button
               type="button"
-              disabled={isUploading}
+              disabled={isUploading || authenticatedOutage}
               onClick={() => fileInputRef.current?.click()}
               className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#6C2CEB] hover:bg-[#5920CB] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
@@ -439,6 +501,51 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
             </div>
           </div>
         </div>
+
+        {(remoteReadOnly || remoteStale || remoteUnavailable) && accessToken && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableTitle')
+                    : t('console.outage.readOnlyTitle')}
+                </div>
+                <div className="text-amber-900">
+                  {remoteUnavailable
+                    ? t('console.outage.unavailableDesc')
+                    : t('console.outage.readOnlyDesc')}
+                </div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {remoteLastSyncedAt
+                    ? new Date(remoteLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void loadRemoteAssets()}
+                className="min-h-[34px] px-3 py-1 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-950 whitespace-nowrap"
+              >
+                {t('console.retryBtn')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('/workspace')}
+                className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap"
+              >
+                {t('console.outage.reconnectGoogleBtn')}
+              </button>
+            </div>
+          </section>
+        )}
 
         {notice && (
           <div
@@ -648,12 +755,13 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
                         </div>
                         <button
                           type="button"
+                          disabled={authenticatedOutage}
                           onClick={(e) => {
                             e.stopPropagation();
                             setConfirmDeleteAsset(asset);
                           }}
                           aria-label={`${t('common.delete')} ${asset.name}`}
-                          className="p-1.5 rounded text-[#574F6B] hover:text-red-700 hover:bg-red-50 shrink-0"
+                          className="p-1.5 rounded text-[#574F6B] hover:text-red-700 hover:bg-red-50 shrink-0 disabled:opacity-40"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -714,8 +822,9 @@ export const ProjectAssetsPage: React.FC<ProjectAssetsPageProps> = ({
 
                 <button
                   type="button"
+                  disabled={authenticatedOutage}
                   onClick={() => setConfirmDeleteAsset(inspectedAsset)}
-                  className="w-full min-h-[36px] px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+                  className="w-full min-h-[36px] px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 text-xs font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>{t('common.delete')}</span>

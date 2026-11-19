@@ -1,4 +1,6 @@
 import { ENV_CONFIG } from '../../config/env';
+import { createOperationKey } from '../../features/console/workspaceHierarchyClient';
+import { WorkerApiError } from '../../features/workspace-connection/workspaceApiClient';
 import { BuildRelease, GoogleWorkspaceState, SiteDocument } from '../../types/builder';
 import { compilerService } from '../compilerService';
 import { getGoogleAccessToken } from '../googleAuthService';
@@ -17,6 +19,9 @@ export interface SharedRuntimePublishOutcome {
   snapshot: PublishedRuntimeSnapshot;
   publishTarget: 'cloudflare_drive' | 'google_drive' | 'local_staging';
   verifiedRemote: boolean;
+  operationId?: string;
+  revision?: number;
+  projectionStatus?: string;
   warning?: string;
 }
 
@@ -32,8 +37,10 @@ export async function publishSiteToSharedRuntime(params: {
   supabaseAccessToken?: string | null;
   orgId?: string;
   projectId?: string;
+  expectedRevision?: number;
 }): Promise<SharedRuntimePublishOutcome> {
-  const { site, workspace, commitMessage, selectedPageIds, supabaseAccessToken, orgId, projectId } = params;
+  const { site, workspace, commitMessage, selectedPageIds, supabaseAccessToken, orgId, projectId, expectedRevision } =
+    params;
 
   const baseRelease = compilerService.compileRelease(
     site,
@@ -56,6 +63,7 @@ export async function publishSiteToSharedRuntime(params: {
 
   // Path 1: Worker + authenticated Builly session -> real Drive upload + D1 registry + cache purge
   if (supabaseAccessToken && (workerBase || ENV_CONFIG.isSupabaseConfigured)) {
+    const operationId = createOperationKey('pub');
     try {
       const formDestinations = (site.cms?.forms || [])
         .filter((f) => f.status === 'active')
@@ -92,8 +100,11 @@ export async function publishSiteToSharedRuntime(params: {
           headers: {
             Authorization: `Bearer ${supabaseAccessToken}`,
             'Content-Type': 'application/json',
+            'Idempotency-Key': operationId,
           },
           body: JSON.stringify({
+            operationId,
+            ...(expectedRevision !== undefined ? { expectedRevision } : {}),
             siteId: site.id,
             siteSlug: site.portfolioSlug,
             siteName: site.name,
@@ -109,18 +120,41 @@ export async function publishSiteToSharedRuntime(params: {
         }
       );
 
-      if (res.ok) {
-        const data = (await res.json()) as {
-          runtimeConfigDriveFileId: string;
-          manifestDriveFileId: string;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const body = (await res.json()) as {
+          runtimeConfigDriveFileId?: string;
+          manifestDriveFileId?: string;
           integrityHash?: string;
+          operationId?: string;
+          revision?: number;
+          projectionStatus?: string;
+          error?: string;
+          code?: string;
+          retryable?: boolean;
+          details?: Record<string, unknown>;
         };
+
+        if (!res.ok) {
+          throw new WorkerApiError(
+            body.error || `Publish failed (${res.status}).`,
+            res.status,
+            body.code || 'PUBLISH_FAILED',
+            {
+              operationId: body.operationId || operationId,
+              retryable: body.retryable,
+              projectionStatus: body.projectionStatus,
+              details: body.details,
+            }
+          );
+        }
+
         const updatedRelease: BuildRelease = {
           ...baseRelease,
-          driveFileId: data.runtimeConfigDriveFileId,
-          artifact_url: data.runtimeConfigDriveFileId,
-          manifest_url: data.manifestDriveFileId,
-          manifestDriveFileId: data.manifestDriveFileId,
+          driveFileId: body.runtimeConfigDriveFileId || baseRelease.driveFileId,
+          artifact_url: body.runtimeConfigDriveFileId || baseRelease.artifact_url,
+          manifest_url: body.manifestDriveFileId || baseRelease.manifest_url,
+          manifestDriveFileId: body.manifestDriveFileId || baseRelease.manifestDriveFileId,
           publishTarget: 'cloudflare_drive',
         };
         return {
@@ -128,10 +162,20 @@ export async function publishSiteToSharedRuntime(params: {
           snapshot,
           publishTarget: 'cloudflare_drive',
           verifiedRemote: true,
+          operationId: body.operationId || operationId,
+          revision: body.revision,
+          projectionStatus: body.projectionStatus,
+          warning:
+            body.projectionStatus === 'PROJECTION_REPAIR_PENDING'
+              ? 'Published to Google Drive, pending D1 index repair.'
+              : undefined,
         };
       }
-    } catch {
-      // Fall through to direct Google OAuth Drive upload or local staging
+    } catch (err) {
+      if (err instanceof WorkerApiError) {
+        throw err;
+      }
+      // Network/non-JSON fallback to direct Google OAuth Drive upload or local staging
     }
   }
 
@@ -186,12 +230,13 @@ export async function rollbackSiteOnSharedRuntime(params: {
   siteSlug: string;
   targetVersion: string;
   supabaseAccessToken?: string | null;
-}): Promise<{ ok: boolean; remoteSynced: boolean; error?: string }> {
+}): Promise<{ ok: boolean; remoteSynced: boolean; operationId?: string; error?: string; code?: string }> {
   const { siteSlug, targetVersion, supabaseAccessToken } = params;
   const workerBase = resolveWorkerBaseUrl();
   if (!supabaseAccessToken || (!workerBase && !ENV_CONFIG.isSupabaseConfigured)) {
     return { ok: true, remoteSynced: false };
   }
+  const operationId = createOperationKey('rb');
   try {
     const res = await fetch(
       `${workerBase}/api/owner/sites/${encodeURIComponent(siteSlug)}/rollback`,
@@ -200,19 +245,31 @@ export async function rollbackSiteOnSharedRuntime(params: {
         headers: {
           Authorization: `Bearer ${supabaseAccessToken}`,
           'Content-Type': 'application/json',
+          'Idempotency-Key': operationId,
         },
-        body: JSON.stringify({ targetVersion }),
+        body: JSON.stringify({ targetVersion, operationId }),
       }
     );
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      operationId?: string;
+    };
     if (!res.ok) {
-      const errData = (await res.json().catch(() => ({}))) as { error?: string };
-      return { ok: false, remoteSynced: false, error: errData.error || `HTTP ${res.status}` };
+      return {
+        ok: false,
+        remoteSynced: false,
+        operationId: data.operationId || operationId,
+        code: data.code,
+        error: data.error || `HTTP ${res.status}`,
+      };
     }
-    return { ok: true, remoteSynced: true };
+    return { ok: true, remoteSynced: true, operationId: data.operationId || operationId };
   } catch (err) {
     return {
       ok: false,
       remoteSynced: false,
+      operationId,
       error: err instanceof Error ? err.message : 'Rollback request failed.',
     };
   }

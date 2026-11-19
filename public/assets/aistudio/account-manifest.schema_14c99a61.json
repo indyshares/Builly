@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Account Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "builly_account_id",
+    "root_folder_id",
+    "organizations_folder_id",
+    "organization_ids",
+    "revision"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "builly_account_id": {
+      "type": "string"
+    },
+    "root_folder_id": {
+      "type": "string"
+    },
+    "system_folder_id": {
+      "type": "string"
+    },
+    "organizations_folder_id": {
+      "type": "string"
+    },
+    "organization_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

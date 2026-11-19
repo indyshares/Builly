@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
+  Archive,
   ArrowRight,
   Building2,
   CheckCircle2,
@@ -20,7 +21,10 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  ShieldAlert,
   SlidersHorizontal,
+  Trash2,
+  Wrench,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BuillyLogo } from '../components/common/BuillyLogo';
@@ -120,9 +124,18 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
   const [newOrgName, setNewOrgName] = useState('');
   const [creatingOrg, setCreatingOrg] = useState(false);
 
-  // Rename Organization inline state
+  // Rename / Archive / Delete Organization inline state
   const [renamingOrg, setRenamingOrg] = useState(false);
   const [renameOrgValue, setRenameOrgValue] = useState('');
+  const [confirmDeleteOrg, setConfirmDeleteOrg] = useState(false);
+  const [archivingOrg, setArchivingOrg] = useState(false);
+  const [deletingOrg, setDeletingOrg] = useState(false);
+
+  // Runtime Index & Recovery state
+  const [rebuildingProjection, setRebuildingProjection] = useState(false);
+  const [processingRepairs, setProcessingRepairs] = useState(false);
+  const [recoveringOpId, setRecoveringOpId] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
 
   // Create Project inline state
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -261,6 +274,12 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
     legacyResourcesCount > 0 ||
     hasBrowserLegacyDraft;
 
+  const isReadOnlyOutage = Boolean(bootstrap?.readOnly);
+  const orgQuotaCount = bootstrap?.organizations.length || 0;
+  const projectQuotaCount = orgProjects.length;
+  const orgQuotaReached = orgQuotaCount >= 10;
+  const projectQuotaReached = projectQuotaCount >= 10;
+
   if (authStatus !== 'authenticated' || !owner || !accessToken) {
     return null;
   }
@@ -291,7 +310,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
 
   const handleRenameOrg = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeOrg) return;
+    if (!activeOrg || isReadOnlyOutage) return;
     setActionError(null);
     if (renameOrgValue.trim().length < 2) {
       setActionError('Organization name must be at least 2 characters.');
@@ -300,6 +319,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
     try {
       await workspaceHierarchyClient.updateOrganization(accessToken, activeOrg.org_id, {
         name: renameOrgValue.trim(),
+        expectedRevision: activeOrg.canonical_revision,
       });
       setRenamingOrg(false);
       await loadBootstrap();
@@ -308,9 +328,107 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
     }
   };
 
+  const handleArchiveOrg = async () => {
+    if (!activeOrg || isReadOnlyOutage) return;
+    setActionError(null);
+    setArchivingOrg(true);
+    try {
+      await workspaceHierarchyClient.archiveOrganization(accessToken, activeOrg.org_id, {
+        expectedRevision: activeOrg.canonical_revision,
+      });
+      setConfirmDeleteOrg(false);
+      await loadBootstrap();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to archive Organization.');
+    } finally {
+      setArchivingOrg(false);
+    }
+  };
+
+  const handleDeleteOrg = async () => {
+    if (!activeOrg || isReadOnlyOutage) return;
+    setActionError(null);
+    setDeletingOrg(true);
+    try {
+      await workspaceHierarchyClient.deleteOrganization(accessToken, activeOrg.org_id, {
+        confirmPermanentDelete: true,
+      });
+      setConfirmDeleteOrg(false);
+      setSelectedOrgId('');
+      await loadBootstrap();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to permanently delete Organization.');
+    } finally {
+      setDeletingOrg(false);
+    }
+  };
+
+  const handleRebuildProjection = async () => {
+    if (isReadOnlyOutage) return;
+    setActionError(null);
+    setRecoveryNotice(null);
+    setRebuildingProjection(true);
+    try {
+      const summary = await workspaceHierarchyClient.rebuildProjection(accessToken);
+      setRecoveryNotice(
+        t('console.recovery.rebuildSuccess', {
+          orgs: summary.organizationsRebuilt,
+          projects: summary.projectsRebuilt,
+          sites: summary.sitesRebuilt,
+        })
+      );
+      await loadBootstrap();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to rebuild runtime index from Drive.');
+    } finally {
+      setRebuildingProjection(false);
+    }
+  };
+
+  const handleProcessRepairs = async () => {
+    setActionError(null);
+    setRecoveryNotice(null);
+    setProcessingRepairs(true);
+    try {
+      const res = await workspaceHierarchyClient.processRepairQueue(accessToken);
+      setRecoveryNotice(
+        t('console.recovery.repairQueueSuccess', {
+          completed: res.completed,
+          processed: res.processed,
+        })
+      );
+      await loadBootstrap();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to process projection repair queue.');
+    } finally {
+      setProcessingRepairs(false);
+    }
+  };
+
+  const handleRecoverOperation = async (operationId: string) => {
+    if (isReadOnlyOutage) return;
+    setActionError(null);
+    setRecoveryNotice(null);
+    setRecoveringOpId(operationId);
+    try {
+      const res = await workspaceHierarchyClient.recoverOperation(accessToken, operationId);
+      setRecoveryNotice(
+        t('console.recovery.recoverOpResult', {
+          opId: res.operationId,
+          status: res.status,
+        })
+      );
+      await loadBootstrap();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to recover operation.');
+    } finally {
+      setRecoveringOpId(null);
+    }
+  };
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeOrg) return;
+    if (!activeOrg || isReadOnlyOutage) return;
     setActionError(null);
     if (newProjectName.trim().length < 2) {
       setActionError('Project name must be at least 2 characters.');
@@ -345,13 +463,16 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
   };
 
   const handleToggleModule = async (modKey: ProjectModuleKey, currentlyEnabled: boolean) => {
-    if (!activeProject) return;
+    if (!activeProject || isReadOnlyOutage) return;
     setActionError(null);
     setTogglingModuleKey(modKey);
     try {
-      await workspaceHierarchyClient.updateProjectModules(accessToken, activeProject.project_id, [
-        { moduleKey: modKey, enabled: !currentlyEnabled },
-      ]);
+      await workspaceHierarchyClient.updateProjectModules(
+        accessToken,
+        activeProject.project_id,
+        [{ moduleKey: modKey, enabled: !currentlyEnabled }],
+        { expectedRevision: activeProject.canonical_revision }
+      );
       await loadBootstrap();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to update module setting.');
@@ -362,7 +483,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
 
   const handleAddSite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProject) return;
+    if (!activeProject || isReadOnlyOutage) return;
     setActionError(null);
 
     const slugCheck = validatePortfolioSlug(newSiteSlug);
@@ -395,7 +516,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
 
   const handleUpdateSite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingSite) return;
+    if (!editingSite || isReadOnlyOutage) return;
     setActionError(null);
 
     const slugCheck = validatePortfolioSlug(editSiteSlug);
@@ -413,6 +534,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
       await workspaceHierarchyClient.updateSiteInProject(accessToken, editingSite.site_id, {
         siteName: editSiteName.trim(),
         siteSlug: slugCheck.normalized,
+        expectedRevision: editingSite.canonical_revision,
       });
       setEditingSite(null);
       await loadBootstrap();
@@ -480,6 +602,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           ownerId={owner.ownerId}
           googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
           googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           authBusy={authBusy}
           onNavigate={onNavigate}
           onSignOut={signOut}
@@ -497,6 +622,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           accessToken={accessToken}
           googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
           googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           authBusy={authBusy}
           onNavigate={onNavigate}
           onSignOut={signOut}
@@ -513,6 +641,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           accessToken={accessToken}
           googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
           googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           authBusy={authBusy}
           onNavigate={onNavigate}
           onSignOut={signOut}
@@ -530,6 +661,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           accessToken={accessToken}
           googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
           googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           authBusy={authBusy}
           onRefreshBootstrap={loadBootstrap}
           onNavigate={onNavigate}
@@ -546,6 +680,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           modules={activeProjectModules}
           sites={activeProjectSites}
           accessToken={accessToken}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           authBusy={authBusy}
           onRefreshBootstrap={loadBootstrap}
           onNavigate={onNavigate}
@@ -564,6 +701,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           accessToken={accessToken}
           googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
           googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+          readOnly={isReadOnlyOutage}
+          outageStale={Boolean(bootstrap.stale)}
+          outageLastSyncedAt={bootstrap.lastSyncedAt || null}
           togglingModuleKey={togglingModuleKey}
           provisioningDrive={provisioningDrive}
           authBusy={authBusy}
@@ -585,6 +725,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
         resources={activeProjectResources}
         googleWorkspaceConnected={bootstrap.googleWorkspace.connected}
         googleWorkspaceNeedsReauth={bootstrap.googleWorkspace.needsReauth}
+        readOnly={isReadOnlyOutage}
+        outageStale={Boolean(bootstrap.stale)}
+        outageLastSyncedAt={bootstrap.lastSyncedAt || null}
         togglingModuleKey={togglingModuleKey}
         provisioningDrive={provisioningDrive}
         savingSite={savingSite}
@@ -595,7 +738,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
         onToggleModule={handleToggleModule}
         onProvisionDrive={handleProvisionProjectDrive}
         onAddSite={async (siteName, siteSlug) => {
-          if (!activeProject) return false;
+          if (!activeProject || isReadOnlyOutage) return false;
           setActionError(null);
           setSavingSite(true);
           try {
@@ -614,12 +757,15 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
           }
         }}
         onUpdateSite={async (siteId, siteName, siteSlug) => {
+          if (isReadOnlyOutage) return false;
           setActionError(null);
           setSavingSite(true);
           try {
+            const targetSite = activeProjectSites.find((s) => s.site_id === siteId);
             await workspaceHierarchyClient.updateSiteInProject(accessToken, siteId, {
               siteName,
               siteSlug,
+              expectedRevision: targetSite?.canonical_revision,
             });
             await loadBootstrap();
             return true;
@@ -794,7 +940,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('/workspace')}
-                className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 shrink-0"
+                className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
               >
                 <span>
                   {bootstrap.googleWorkspace.connected
@@ -804,6 +950,148 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </section>
+
+            {/* OAuth Outage / Read-Only Stale Cache Banner */}
+            {(isReadOnlyOutage || bootstrap.stale || bootstrap.unavailable) && (
+              <section
+                role="status"
+                className="rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4"
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-amber-950">
+                      {t('console.outage.readOnlyTitle')}
+                    </div>
+                    <p className="text-xs text-amber-900 leading-relaxed">
+                      {bootstrap.outageReason || t('console.outage.readOnlyDesc')}
+                    </p>
+                    <div className="text-[11px] font-mono tabular-nums text-amber-800">
+                      {t('console.outage.lastSyncedLabel')}:{' '}
+                      {bootstrap.lastSyncedAt
+                        ? new Date(bootstrap.lastSyncedAt).toLocaleString()
+                        : t('console.cms.neverSynced')}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void loadBootstrap()}
+                    className="min-h-[36px] px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-xs font-semibold text-amber-950 inline-flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>{t('console.retryBtn')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('/workspace')}
+                    className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold whitespace-nowrap"
+                  >
+                    {t('console.outage.reconnectGoogleBtn')}
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {/* Runtime Index & Recovery Panel */}
+            {((bootstrap.pendingRepairsCount || 0) > 0 ||
+              (bootstrap.needsReconciliationCount || 0) > 0 ||
+              recoveryNotice ||
+              bootstrap.googleWorkspace.connected) && (
+              <section className="rounded-2xl border border-[#211B2E]/10 bg-white p-4 sm:p-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Wrench className="w-4 h-4 text-[#6C2CEB] shrink-0" />
+                    <div className="min-w-0">
+                      <h2 className="text-xs sm:text-sm font-semibold text-[#211B2E]">
+                        {t('console.recovery.heading')}
+                      </h2>
+                      <p className="text-xs text-[#574F6B] font-mono tabular-nums">
+                        {t('console.recovery.statusSummary', {
+                          repairs: bootstrap.pendingRepairsCount || 0,
+                          reconcile: bootstrap.needsReconciliationCount || 0,
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {(bootstrap.pendingRepairsCount || 0) > 0 && (
+                      <button
+                        type="button"
+                        disabled={processingRepairs || isReadOnlyOutage}
+                        onClick={() => void handleProcessRepairs()}
+                        className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 bg-[#F7F6FA] hover:bg-[#EDEAF5] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {processingRepairs && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>{t('console.recovery.processRepairsBtn')}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={rebuildingProjection || isReadOnlyOutage || !bootstrap.googleWorkspace.connected}
+                      onClick={() => void handleRebuildProjection()}
+                      className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 bg-white hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {rebuildingProjection ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5 text-[#6C2CEB]" />
+                      )}
+                      <span>{t('console.recovery.rebuildIndexBtn')}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {recoveryNotice && (
+                  <div
+                    role="status"
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{recoveryNotice}</span>
+                  </div>
+                )}
+
+                {bootstrap.needsReconciliationOps && bootstrap.needsReconciliationOps.length > 0 && (
+                  <div className="border-t border-[#211B2E]/10 pt-3 space-y-2">
+                    <div className="text-xs font-semibold text-amber-900">
+                      {t('console.recovery.needsReconciliationHeading')}
+                    </div>
+                    <div className="divide-y divide-[#211B2E]/8 border border-amber-200 rounded-lg bg-amber-50/40">
+                      {bootstrap.needsReconciliationOps.map((op) => (
+                        <div
+                          key={op.operationId}
+                          className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-mono font-semibold text-[#211B2E]">
+                              {op.operationType} · {op.operationId}
+                            </span>
+                            {op.error?.message && (
+                              <div className="text-[11px] text-amber-900 truncate">
+                                {op.error.message}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={recoveringOpId === op.operationId || isReadOnlyOutage}
+                            onClick={() => void handleRecoverOperation(op.operationId)}
+                            className="min-h-[30px] px-2.5 py-1 rounded bg-[#211B2E] text-white text-xs font-semibold inline-flex items-center gap-1 disabled:opacity-50 whitespace-nowrap shrink-0"
+                          >
+                            {recoveringOpId === op.operationId && (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            )}
+                            <span>{t('console.recovery.recoverBtn')}</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* Legacy Migration Detection Banner & Guided Wizard */}
             {hasLegacyItemsToMigrate && !showMigrationWizard && (
@@ -878,15 +1166,30 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                     onChange={(e) => {
                       setSelectedOrgId(e.target.value);
                       setRenamingOrg(false);
+                      setConfirmDeleteOrg(false);
                     }}
                     className="min-h-[40px] px-3 py-1.5 rounded-lg border border-[#211B2E]/20 bg-[#F7F6FA] text-sm font-semibold text-[#211B2E]"
                   >
                     {bootstrap.organizations.map((org) => (
                       <option key={org.org_id} value={org.org_id}>
                         {org.name}
+                        {org.status === 'archived' ? ` (${t('console.orgs.archivedBadge')})` : ''}
                       </option>
                     ))}
                   </select>
+                  <span className="px-2 py-1 rounded-md bg-[#F7F6FA] border border-[#211B2E]/10 text-[11px] font-mono tabular-nums text-[#4A435C]">
+                    {orgQuotaCount} / 10
+                  </span>
+                  {activeOrg?.status === 'archived' && (
+                    <span className="px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-900">
+                      {t('console.orgs.archivedBadge')}
+                    </span>
+                  )}
+                  {activeOrg?.canonical_revision !== undefined && (
+                    <span className="text-[11px] font-mono tabular-nums text-[#574F6B]">
+                      rev {activeOrg.canonical_revision}
+                    </span>
+                  )}
                   {activeOrg?.role && (
                     <span className="px-2 py-1 rounded-md bg-[#F7F6FA] border border-[#211B2E]/10 text-[11px] font-medium text-[#4A435C]">
                       {t('console.orgs.roleBadge', { role: activeOrg.role })}
@@ -894,30 +1197,94 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {activeOrg && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {activeOrg && activeOrg.status === 'active' && (
                     <button
                       type="button"
+                      disabled={isReadOnlyOutage}
                       onClick={() => {
                         setRenamingOrg((v) => !v);
                         setRenameOrgValue(activeOrg.name);
                       }}
-                      className="min-h-[38px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5"
+                      className="min-h-[38px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                       <span>{t('console.orgs.renameBtn')}</span>
                     </button>
                   )}
+                  {activeOrg && activeOrg.status === 'active' && (
+                    <button
+                      type="button"
+                      disabled={isReadOnlyOutage || archivingOrg}
+                      onClick={() => void handleArchiveOrg()}
+                      className="min-h-[38px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {archivingOrg ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Archive className="w-3.5 h-3.5" />
+                      )}
+                      <span>{t('console.orgs.archiveBtn')}</span>
+                    </button>
+                  )}
+                  {activeOrg && activeOrg.status === 'archived' && (
+                    <button
+                      type="button"
+                      disabled={isReadOnlyOutage || deletingOrg || orgProjects.length > 0}
+                      title={
+                        orgProjects.length > 0
+                          ? t('console.orgs.deleteRequiresEmptyHint')
+                          : undefined
+                      }
+                      onClick={() => setConfirmDeleteOrg((v) => !v)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{t('console.orgs.deletePermanentBtn')}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
+                    disabled={isReadOnlyOutage || orgQuotaReached}
                     onClick={() => setShowCreateOrg((v) => !v)}
-                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>{t('console.orgs.newBtn')}</span>
                   </button>
                 </div>
               </div>
+
+              <div className="text-[11px] text-[#574F6B]">
+                {t('console.orgs.quotaNote')}
+              </div>
+
+              {confirmDeleteOrg && activeOrg && activeOrg.status === 'archived' && (
+                <div className="pt-3 border-t border-red-200 flex flex-wrap items-center justify-between gap-3 bg-red-50/50 rounded-lg p-3">
+                  <div className="text-xs text-red-900">
+                    {t('console.orgs.confirmDeleteDesc', { orgName: activeOrg.name })}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={deletingOrg}
+                      onClick={() => setConfirmDeleteOrg(false)}
+                      className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 bg-white text-xs font-medium text-[#211B2E]"
+                    >
+                      {t('console.orgs.cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingOrg || orgProjects.length > 0 || isReadOnlyOutage}
+                      onClick={() => void handleDeleteOrg()}
+                      className="min-h-[34px] px-3.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {deletingOrg && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{t('console.orgs.deletePermanentBtn')}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {renamingOrg && activeOrg && (
                 <form
@@ -986,14 +1353,20 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                 {/* Left Column: Projects List */}
                 <section className="lg:col-span-4 rounded-2xl border border-[#211B2E]/10 bg-white p-5 space-y-4 h-fit">
                   <div className="flex items-center justify-between gap-2">
-                    <h2 className="font-['Outfit',sans-serif] text-base font-semibold text-[#211B2E] flex items-center gap-2">
-                      <FolderKanban className="w-4 h-4 text-[#6C2CEB]" />
-                      <span>{t('console.projects.heading', { orgName: activeOrg.name })}</span>
-                    </h2>
+                    <div className="min-w-0">
+                      <h2 className="font-['Outfit',sans-serif] text-base font-semibold text-[#211B2E] flex items-center gap-2">
+                        <FolderKanban className="w-4 h-4 text-[#6C2CEB] shrink-0" />
+                        <span className="truncate">{t('console.projects.heading', { orgName: activeOrg.name })}</span>
+                      </h2>
+                      <div className="text-[11px] font-mono tabular-nums text-[#574F6B] mt-0.5">
+                        {projectQuotaCount} / 10 · {t('console.projects.quotaNote')}
+                      </div>
+                    </div>
                     <button
                       type="button"
+                      disabled={isReadOnlyOutage || activeOrg.status === 'archived' || projectQuotaReached}
                       onClick={() => setShowCreateProject((v) => !v)}
-                      className="min-h-[34px] px-2.5 py-1 rounded-lg bg-[#F7F6FA] hover:bg-[#EDEAF5] border border-[#211B2E]/10 text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1"
+                      className="min-h-[34px] px-2.5 py-1 rounded-lg bg-[#F7F6FA] hover:bg-[#EDEAF5] border border-[#211B2E]/10 text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1 disabled:opacity-50 shrink-0 whitespace-nowrap"
                     >
                       <Plus className="w-3.5 h-3.5 text-[#6C2CEB]" />
                       <span>{t('console.projects.newBtn')}</span>
@@ -1106,9 +1479,16 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                               <span className="text-sm font-semibold text-[#211B2E] truncate">
                                 {project.name}
                               </span>
-                              <span className="text-[11px] font-mono text-[#574F6B] shrink-0">
-                                {projSitesCount} site{projSitesCount === 1 ? '' : 's'}
-                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {project.status === 'archived' && (
+                                  <span className="px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-[10px] font-semibold text-amber-900">
+                                    {t('console.orgs.archivedBadge')}
+                                  </span>
+                                )}
+                                <span className="text-[11px] font-mono tabular-nums text-[#574F6B]">
+                                  {projSitesCount} site{projSitesCount === 1 ? '' : 's'}
+                                </span>
+                              </div>
                             </div>
                             {project.description && (
                               <p className="text-xs text-[#4A435C] mt-1 line-clamp-2">
@@ -1211,9 +1591,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                                 <button
                                   key={modKey}
                                   type="button"
-                                  disabled={busy}
+                                  disabled={busy || isReadOnlyOutage || activeProject.status === 'archived'}
                                   onClick={() => handleToggleModule(modKey, enabled)}
-                                  className={`rounded-xl border p-3 text-left flex items-center justify-between gap-2 transition-colors ${
+                                  className={`rounded-xl border p-3 text-left flex items-center justify-between gap-2 transition-colors disabled:opacity-60 ${
                                     enabled
                                       ? 'border-[#6C2CEB]/30 bg-[#F9F7FF]'
                                       : 'border-[#211B2E]/10 bg-[#F7F6FA] opacity-70'
@@ -1272,7 +1652,11 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                               !bootstrap.googleWorkspace.needsReauth && (
                                 <button
                                   type="button"
-                                  disabled={provisioningDrive}
+                                  disabled={
+                                    provisioningDrive ||
+                                    isReadOnlyOutage ||
+                                    activeProject.status === 'archived'
+                                  }
                                   onClick={() =>
                                     handleProvisionProjectDrive(
                                       Boolean(activeProject.drive_folder_id)
@@ -1347,8 +1731,9 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                           </h3>
                           <button
                             type="button"
+                            disabled={isReadOnlyOutage || activeProject.status === 'archived'}
                             onClick={() => setShowAddSite((v) => !v)}
-                            className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5"
+                            className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
                           >
                             <Plus className="w-3.5 h-3.5 text-[#6C2CEB]" />
                             <span>{t('console.projects.addSiteBtn')}</span>
@@ -1450,6 +1835,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                                     <div className="flex items-center gap-2">
                                       <button
                                         type="button"
+                                        disabled={isReadOnlyOutage || activeProject.status === 'archived'}
                                         onClick={() => {
                                           if (isEditingThis) {
                                             setEditingSite(null);
@@ -1459,7 +1845,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({
                                             setEditSiteSlug(site.site_slug);
                                           }
                                         }}
-                                        className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 bg-white text-xs font-medium text-[#211B2E] inline-flex items-center gap-1"
+                                        className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 bg-white text-xs font-medium text-[#211B2E] inline-flex items-center gap-1 disabled:opacity-50"
                                       >
                                         <Pencil className="w-3 h-3" />
                                         <span>{t('console.projects.renameSite')}</span>

@@ -1721,6 +1721,25 @@
       "submitBtn": "สร้างองค์กรและเข้าสู่คอนโซล",
       "submittingBtn": "กำลังสร้างองค์กร..."
     },
+    "outage": {
+      "readOnlyTitle": "ไม่สามารถเชื่อมต่อ Google Drive — โหมดอ่านอย่างเดียวจากแคช",
+      "readOnlyDesc": "กำลังแสดงข้อมูลจากแคชที่ได้รับอนุญาต ปิดการแก้ไขและบันทึกชั่วคราวจนกว่าจะเชื่อมต่อ Google Workspace ใหม่และซิงค์สถานะล่าสุดจาก Drive",
+      "unavailableTitle": "ไม่สามารถโหลดข้อมูลได้ขณะ Google OAuth ขาดการเชื่อมต่อ",
+      "unavailableDesc": "ไม่พบแคชที่ได้รับอนุญาตสำหรับทรัพยากรนี้ กรุณาเชื่อมต่อ Google Workspace ใหม่แล้วลองอีกครั้งเพื่อดึงข้อมูลจริงจาก Drive",
+      "lastSyncedLabel": "ซิงค์ล่าสุด",
+      "reconnectGoogleBtn": "เชื่อมต่อ Google ใหม่"
+    },
+    "recovery": {
+      "heading": "ดัชนี Runtime และการกู้คืนจาก Drive",
+      "statusSummary": "รอซ่อมแซม D1: {{repairs}} · รอตรวจสอบความสอดคล้อง: {{reconcile}}",
+      "processRepairsBtn": "ประมวลผลคิวซ่อมแซม",
+      "rebuildIndexBtn": "สร้างดัชนีใหม่จาก Drive",
+      "rebuildSuccess": "สร้างดัชนี Runtime ใหม่จาก Drive แล้ว ({{orgs}} องค์กร, {{projects}} โปรเจกต์, {{sites}} เว็บไซต์)",
+      "repairQueueSuccess": "ประมวลผลคิวซ่อมแซมแล้ว ({{completed}} / {{processed}} รายการ)",
+      "recoverOpResult": "สถานะการทำงาน {{opId}}: {{status}}",
+      "needsReconciliationHeading": "รายการที่รอการตรวจสอบและกู้คืน",
+      "recoverBtn": "กู้คืน"
+    },
     "orgs": {
       "label": "องค์กร",
       "newBtn": "สร้างองค์กรใหม่",
@@ -1729,7 +1748,13 @@
       "namePlaceholder": "ชื่อองค์กร (2–80 ตัวอักษร)",
       "createSubmit": "สร้าง",
       "cancel": "ยกเลิก",
-      "roleBadge": "สิทธิ์: {{role}}"
+      "roleBadge": "สิทธิ์: {{role}}",
+      "archivedBadge": "เก็บถาวรแล้ว",
+      "archiveBtn": "เก็บถาวร",
+      "deletePermanentBtn": "ลบถาวร",
+      "deleteRequiresEmptyHint": "กรุณาลบโปรเจกต์ทั้งหมดในองค์กรนี้อย่างถาวรก่อนลบองค์กร",
+      "quotaNote": "รวมรายการที่เก็บถาวรจนกว่าจะลบ",
+      "confirmDeleteDesc": "ต้องการลบองค์กร \"{{orgName}}\" อย่างถาวรหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้และจะลบรายการออกจาก Manifest บน Drive"
     },
     "projects": {
       "heading": "โปรเจกต์ใน {{orgName}}",
@@ -1753,7 +1778,9 @@
       "renameSite": "แก้ไขเว็บไซต์",
       "viewLiveSite": "เปิด /s/{{slug}}",
       "statusPublished": "เผยแพร่แล้ว",
-      "statusDraft": "ดราฟต์"
+      "statusDraft": "ดราฟต์",
+      "quotaNote": "รวมรายการที่เก็บถาวรจนกว่าจะลบ",
+      "archivedBannerDesc": "โปรเจกต์นี้ถูกเก็บถาวรและอยู่ในโหมดอ่านอย่างเดียว กรุณาลบถาวรในหน้าตั้งค่าโปรเจกต์เพื่อคืนโควต้าโปรเจกต์ขององค์กร"
     },
     "modules": {
       "builder": "Visual Builder",
@@ -1852,7 +1879,8 @@
       "manifestFileLabel": "ไฟล์ Manifest",
       "spreadsheetLabel": "สเปรดชีต CMS",
       "revisionStat": "เวอร์ชัน CMS",
-      "taxonomyStat": "หมวดหมู่และแท็ก"
+      "taxonomyStat": "หมวดหมู่และแท็ก",
+      "datasetSpreadsheetsLabel": "สเปรดชีตแยกตาม Dataset"
     },
     "moduleShell": {
       "breadcrumbsAria": "เส้นทางโมดูลของโปรเจกต์",
@@ -1945,7 +1973,15 @@
       "dangerDesc": "ล้างเฉพาะข้อมูลดราฟต์และไฟล์แคชที่ค้างในเบราว์เซอร์นี้สำหรับโปรเจกต์ปัจจุบัน โฟลเดอร์บน Google Drive และเว็บไซต์ที่เผยแพร่แล้วจะไม่ถูกแก้ไข",
       "resetLocalCacheBtn": "ล้างแคชดราฟต์ในเบราว์เซอร์",
       "confirmResetTitle": "ล้างแคชดราฟต์ในเบราว์เซอร์หรือไม่?",
-      "confirmResetDesc": "การแก้ไขที่ยังไม่เผยแพร่และเก็บเฉพาะในเบราว์เซอร์นี้จะกลับไปเป็นเทมเพลตเริ่มต้น ข้อมูลบน Drive และเว็บไซต์จริงยังคงปลอดภัย"
+      "confirmResetDesc": "การแก้ไขที่ยังไม่เผยแพร่และเก็บเฉพาะในเบราว์เซอร์นี้จะกลับไปเป็นเทมเพลตเริ่มต้น ข้อมูลบน Drive และเว็บไซต์จริงยังคงปลอดภัย",
+      "lifecycleTitle": "วงจรชีวิตโปรเจกต์และการลบถาวร",
+      "lifecycleActiveDesc": "การเก็บถาวรจะล็อกโปรเจกต์นี้ให้อยู่ในโหมดอ่านอย่างเดียว โปรเจกต์ที่เก็บถาวรยังถูกนับรวมในโควต้า 10 โปรเจกต์จนกว่าจะถูกลบถาวร",
+      "lifecycleArchivedDesc": "โปรเจกต์นี้ถูกเก็บถาวรและล็อกไว้แล้ว สามารถลบถาวรเมื่อไม่ใช้งานเพื่อคืนโควต้าในองค์กร",
+      "archiveProjectBtn": "เก็บถาวรโปรเจกต์",
+      "deleteProjectPermanentBtn": "ลบโปรเจกต์ถาวร",
+      "projectArchivedSuccess": "เก็บถาวรโปรเจกต์และล็อกเป็นโหมดอ่านอย่างเดียวแล้ว",
+      "confirmDeleteProjectTitle": "ลบ \"{{name}}\" อย่างถาวรหรือไม่?",
+      "confirmDeleteProjectDesc": "การดำเนินการนี้จะลบโปรเจกต์ออกจาก Drive Manifest และดัชนี Runtime อย่างถาวร และไม่สามารถกู้คืนได้"
     },
     "migration": {
       "bannerTitle": "พบข้อมูลเวิร์กสเปซเดิมที่พร้อมย้ายเข้าโปรเจกต์",

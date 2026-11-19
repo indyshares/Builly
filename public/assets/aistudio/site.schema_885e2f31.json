@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Site",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "site_id",
+    "project_id",
+    "site_slug",
+    "status",
+    "revision"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "site_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "site_slug": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "published",
+        "suspended",
+        "archived"
+      ]
+    },
+    "active_publish_version_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "site_config_file_id": {
+      "type": "string"
+    },
+    "published_folder_id": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

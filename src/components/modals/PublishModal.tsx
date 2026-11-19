@@ -30,6 +30,8 @@ interface PublishModalProps {
   supabaseAccessToken?: string | null;
   orgId?: string;
   projectId?: string;
+  readOnly?: boolean;
+  expectedRevision?: number;
   onClose: () => void;
   onPublishSuccess: (release: BuildRelease, publishedPageIds: string[]) => void;
   onOpenPublicSite: () => void;
@@ -43,6 +45,8 @@ export const PublishModal: React.FC<PublishModalProps> = ({
   supabaseAccessToken,
   orgId,
   projectId,
+  readOnly = false,
+  expectedRevision,
   onClose,
   onPublishSuccess,
   onOpenPublicSite,
@@ -95,6 +99,10 @@ export const PublishModal: React.FC<PublishModalProps> = ({
   };
 
   const handleStartPublish = async () => {
+    if (readOnly) {
+      setPublishError('Workspace is in read-only mode because Google Workspace OAuth is disconnected.');
+      return;
+    }
     setIsBuilding(true);
     setPublishError(null);
     setBuildStep(1);
@@ -109,14 +117,18 @@ export const PublishModal: React.FC<PublishModalProps> = ({
         supabaseAccessToken,
         orgId,
         projectId,
+        expectedRevision,
       });
       setBuildStep(4);
       setPublishOutcome(outcome);
       onPublishSuccess(outcome.release, selectedPageIds);
     } catch (err) {
-      setPublishError(
-        err instanceof Error ? err.message : 'Unable to publish runtime snapshot.'
-      );
+      const opId =
+        err && typeof err === 'object' && 'operationId' in err && typeof err.operationId === 'string'
+          ? err.operationId
+          : '';
+      const msg = err instanceof Error ? err.message : 'Unable to publish runtime snapshot.';
+      setPublishError(opId ? `${msg} (Operation: ${opId})` : msg);
       setBuildStep(0);
     } finally {
       setIsBuilding(false);
@@ -285,6 +297,15 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                 />
               </div>
 
+              {readOnly && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                  <span>
+                    Read-only outage mode: publishing is disabled until Google Workspace OAuth is reconnected.
+                  </span>
+                </div>
+              )}
+
               {publishError && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
                   <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -399,8 +420,8 @@ export const PublishModal: React.FC<PublishModalProps> = ({
               <button
                 type="button"
                 onClick={handleStartPublish}
-                disabled={isBuilding || !report.passed}
-                className="min-h-[38px] px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded disabled:opacity-50 flex items-center gap-1.5"
+                disabled={readOnly || isBuilding || !report.passed}
+                className="min-h-[38px] px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
               >
                 <Rocket className="w-3.5 h-3.5 text-emerald-400" />
                 <span>

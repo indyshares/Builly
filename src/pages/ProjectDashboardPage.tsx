@@ -17,6 +17,7 @@ import {
   Pencil,
   Plus,
   Settings,
+  ShieldAlert,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BuillyLogo } from '../components/common/BuillyLogo';
@@ -42,6 +43,9 @@ interface ProjectDashboardPageProps {
   resources: WorkspaceResourceRecord[];
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   togglingModuleKey: string | null;
   provisioningDrive: boolean;
   savingSite: boolean;
@@ -75,6 +79,9 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
   resources,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   togglingModuleKey,
   provisioningDrive,
   savingSite,
@@ -90,6 +97,7 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
   onSignOut,
 }) => {
   const { t } = useTranslation();
+  const writesLocked = Boolean(readOnly || project.status === 'archived');
 
   const [showAddSite, setShowAddSite] = useState(false);
   const [newSiteName, setNewSiteName] = useState('');
@@ -336,6 +344,40 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
           </div>
         </section>
 
+        {(readOnly || outageStale) && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">{t('console.outage.readOnlyTitle')}</div>
+                <div className="text-amber-900">{t('console.outage.readOnlyDesc')}</div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {outageLastSyncedAt
+                    ? new Date(outageLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('/workspace')}
+              className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap shrink-0"
+            >
+              {t('console.outage.reconnectGoogleBtn')}
+            </button>
+          </section>
+        )}
+
+        {project.status === 'archived' && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900">
+            {t('console.projects.archivedBannerDesc')}
+          </div>
+        )}
+
         {combinedError && (
           <div
             role="alert"
@@ -425,9 +467,9 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
                       </div>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || writesLocked}
                         onClick={() => onToggleModule(modKey, enabled)}
-                        className="text-xs font-medium text-[#574F6B] hover:text-[#211B2E] px-2 py-1 rounded border border-[#211B2E]/12 bg-[#F7F6FA] whitespace-nowrap shrink-0"
+                        className="text-xs font-medium text-[#574F6B] hover:text-[#211B2E] px-2 py-1 rounded border border-[#211B2E]/12 bg-[#F7F6FA] whitespace-nowrap shrink-0 disabled:opacity-50"
                       >
                         {busy ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin inline" />
@@ -493,7 +535,7 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
             {googleWorkspaceConnected && !googleWorkspaceNeedsReauth ? (
               <button
                 type="button"
-                disabled={provisioningDrive}
+                disabled={provisioningDrive || writesLocked}
                 onClick={() => onProvisionDrive(Boolean(project.drive_folder_id))}
                 className="min-h-[38px] px-4 py-2 rounded-lg bg-[#211B2E] hover:bg-[#322944] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
               >
@@ -554,8 +596,9 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
             </h2>
             <button
               type="button"
+              disabled={writesLocked}
               onClick={() => setShowAddSite((v) => !v)}
-              className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50"
             >
               <Plus className="w-3.5 h-3.5 text-[#6C2CEB]" />
               <span>{t('console.projects.addSiteBtn')}</span>
@@ -640,6 +683,7 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
+                          disabled={writesLocked}
                           onClick={() => {
                             if (isEditingThis) {
                               setEditingSite(null);
@@ -649,7 +693,7 @@ export const ProjectDashboardPage: React.FC<ProjectDashboardPageProps> = ({
                               setEditSiteSlug(site.site_slug);
                             }
                           }}
-                          className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 bg-white text-xs font-medium text-[#211B2E] inline-flex items-center gap-1 whitespace-nowrap"
+                          className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#211B2E]/15 bg-white text-xs font-medium text-[#211B2E] inline-flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
                         >
                           <Pencil className="w-3 h-3" />
                           <span>{t('console.projects.renameSite')}</span>

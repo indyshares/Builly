@@ -1,13 +1,19 @@
+import { verifyDriveParent } from '../services/driveCanonicalClient';
 import {
   driveJson,
   ensureFolderSegment,
   ensureProjectDriveTree,
   listFilesInFolder,
+  readDriveJsonWithConcurrency,
   readJsonFileById,
   upsertWorkspaceResource,
   writeJsonFileInFolder,
 } from '../services/driveProvisioner';
 import { mintOwnerGoogleAccessToken } from '../services/googleTokenVault';
+import { readManagementCache, writeManagementCache } from '../services/managementCacheService';
+import { withMutationLock } from '../services/mutationLockService';
+import { generateOperationId } from '../services/operationJournalService';
+import { BuillyTransactionError } from '../services/transactionErrors';
 import {
   HierarchyServiceError,
   requireProjectAccess,
@@ -64,22 +70,24 @@ export interface StoredAssetManifestEntry {
 }
 
 function mapAssetError(err: unknown): Response {
+  if (err instanceof BuillyTransactionError) {
+    return Response.json(err.toSafeJson(), { status: err.status });
+  }
   if (err instanceof HierarchyServiceError) {
     return Response.json({ error: err.message, code: err.code }, { status: err.status });
   }
   const code = err instanceof Error ? err.message : 'PROJECT_ASSETS_ERROR';
-  const status = code === 'WORKSPACE_REAUTH_REQUIRED' ? 401 : 500;
+  const isOauthOutage = code === 'WORKSPACE_REAUTH_REQUIRED';
   return Response.json(
     {
-      error:
-        code === 'WORKSPACE_REAUTH_REQUIRED'
-          ? 'Google Workspace connection or reauthorization is required.'
-          : err instanceof Error
-          ? err.message
-          : 'Project Asset operation failed.',
-      code,
+      error: isOauthOutage
+        ? 'Google Workspace connection is unavailable or expired.'
+        : err instanceof Error
+        ? err.message
+        : 'Project Asset operation failed.',
+      code: isOauthOutage ? 'WRITE_DISABLED_OAUTH_UNAVAILABLE' : code,
     },
-    { status }
+    { status: isOauthOutage ? 503 : 500 }
   );
 }
 
@@ -132,7 +140,7 @@ async function readManifestFromDrive(
   accessToken: string,
   assetsRootFolderId: string,
   existingManifestFileId?: string
-): Promise<{ fileId: string; entries: StoredAssetManifestEntry[] }> {
+): Promise<{ fileId: string; revision?: number; etag?: string; entries: StoredAssetManifestEntry[] }> {
   let manifestFileId = existingManifestFileId || '';
   if (!manifestFileId && assetsRootFolderId) {
     const files = await listFilesInFolder(accessToken, assetsRootFolderId);
@@ -145,15 +153,30 @@ async function readManifestFromDrive(
   }
 
   try {
-    const data = (await readJsonFileById(accessToken, manifestFileId)) as {
+    const read = await readDriveJsonWithConcurrency<{
+      revision?: number;
       assets?: StoredAssetManifestEntry[];
-    };
+    }>(accessToken, manifestFileId);
     return {
       fileId: manifestFileId,
-      entries: Array.isArray(data?.assets) ? data.assets : [],
+      revision: Number(read.data?.revision ?? 1),
+      etag: read.meta.etag,
+      entries: Array.isArray(read.data?.assets) ? read.data.assets : [],
     };
   } catch {
-    return { fileId: manifestFileId, entries: [] };
+    try {
+      const data = (await readJsonFileById(accessToken, manifestFileId)) as {
+        revision?: number;
+        assets?: StoredAssetManifestEntry[];
+      };
+      return {
+        fileId: manifestFileId,
+        revision: Number(data?.revision ?? 1),
+        entries: Array.isArray(data?.assets) ? data.assets : [],
+      };
+    } catch {
+      return { fileId: manifestFileId, entries: [] };
+    }
   }
 }
 
@@ -164,12 +187,13 @@ export async function handleListProjectAssets(
   projectId: string
 ): Promise<Response> {
   try {
-    await requireProjectAccess(env.DB, projectId, session.ownerId, [
+    const access = await requireProjectAccess(env.DB, projectId, session.ownerId, [
       'owner',
       'admin',
       'editor',
       'viewer',
     ]);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
 
     const resourceRows = await env.DB.prepare(
       `SELECT resource_kind, drive_file_id, title
@@ -186,27 +210,70 @@ export async function handleListProjectAssets(
 
     let accessToken: string;
     try {
-      const minted = await mintOwnerGoogleAccessToken(env, session.ownerId);
+      const minted = await mintOwnerGoogleAccessToken(env, ownerAccountId);
       accessToken = minted.accessToken;
     } catch {
-      return Response.json({
-        ok: true,
-        projectId,
-        workspaceConnected: false,
-        folderId: assetsRootId,
-        manifestFileId: manifestId,
-        assets: [],
+      const cached = await readManagementCache<{
+        manifestFileId?: string;
+        assets?: StoredAssetManifestEntry[];
+      }>(env.DB, {
+        ownerId: ownerAccountId,
+        resourceType: 'assets_manifest',
+        resourceId: projectId,
       });
+
+      if (cached) {
+        return Response.json({
+          ok: true,
+          projectId,
+          workspaceConnected: false,
+          readOnly: true,
+          stale: true,
+          lastSyncedAt: cached.lastSyncedAt,
+          folderId: assetsRootId,
+          manifestFileId: cached.payload.manifestFileId || manifestId,
+          assets: cached.payload.assets || [],
+        });
+      }
+
+      return Response.json(
+        {
+          ok: false,
+          projectId,
+          workspaceConnected: false,
+          readOnly: true,
+          unavailable: true,
+          error: 'Google Workspace connection is unavailable and no cached Asset manifest exists.',
+          code: 'WRITE_DISABLED_OAUTH_UNAVAILABLE',
+        },
+        { status: 503 }
+      );
     }
 
     const manifest = assetsRootId
       ? await readManifestFromDrive(accessToken, assetsRootId, manifestId)
-      : { fileId: manifestId, entries: [] };
+      : { fileId: manifestId, revision: 1, entries: [] };
+
+    const syncedCache = await writeManagementCache(env.DB, {
+      ownerId: ownerAccountId,
+      resourceType: 'assets_manifest',
+      resourceId: projectId,
+      canonicalRevision: manifest.revision || 1,
+      payload: {
+        manifestFileId: manifest.fileId,
+        assets: manifest.entries,
+      },
+      ttlSeconds: 3600,
+    }).catch(() => null);
 
     return Response.json({
       ok: true,
       projectId,
       workspaceConnected: true,
+      readOnly: false,
+      stale: false,
+      lastSyncedAt: syncedCache?.lastSyncedAt || new Date().toISOString(),
+      revision: manifest.revision || 1,
       folderId: assetsRootId,
       manifestFileId: manifest.fileId,
       assets: manifest.entries,
@@ -223,6 +290,9 @@ export async function handleUploadProjectAsset(
   projectId: string
 ): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as {
+    operationId?: string;
+    expectedRevision?: number;
+    expectedEtag?: string;
     name?: string;
     mimeType?: string;
     category?: string;
@@ -237,6 +307,11 @@ export async function handleUploadProjectAsset(
 
   const fileName = (body.name || '').trim();
   const mimeType = (body.mimeType || '').trim().toLowerCase();
+  const operationId =
+    body.operationId?.trim() ||
+    request.headers.get('Idempotency-Key')?.trim() ||
+    generateOperationId('op_ast_up');
+  const expectedEtag = body.expectedEtag || request.headers.get('If-Match')?.trim() || undefined;
 
   if (!fileName || fileName.length > 180) {
     return Response.json(
@@ -304,6 +379,20 @@ export async function handleUploadProjectAsset(
       'admin',
       'editor',
     ]);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
+
+    let accessToken: string;
+    try {
+      const minted = await mintOwnerGoogleAccessToken(env, ownerAccountId);
+      accessToken = minted.accessToken;
+    } catch {
+      throw new BuillyTransactionError(
+        'WRITE_DISABLED_OAUTH_UNAVAILABLE',
+        'Google Workspace connection is unavailable. Asset uploads are disabled in read-only mode.',
+        { operationId, status: 503, retryable: false }
+      );
+    }
+
     const orgRow = await env.DB.prepare(
       `SELECT org_slug FROM organizations WHERE org_id = ? LIMIT 1`
     )
@@ -311,112 +400,185 @@ export async function handleUploadProjectAsset(
       .first<{ org_slug: string }>();
     const orgSlug = orgRow?.org_slug || access.project.org_id;
 
-    const tree = await ensureProjectDriveTree(env, session, projectId);
-    const { accessToken } = await mintOwnerGoogleAccessToken(env, session.ownerId);
+    return await withMutationLock(
+      env,
+      { scopeKey: `project:${projectId}`, operationId },
+      async (lock) => {
+        const tree = await ensureProjectDriveTree(env, session, projectId, {
+          operationId,
+          accessTokenOverride: accessToken,
+        });
 
-    const categoryKey = CATEGORY_FOLDER_LABELS[body.category || ''] ? String(body.category) : 'other';
-    const categoryFolderLabel = CATEGORY_FOLDER_LABELS[categoryKey] || 'Other';
+        const existingManifest = await readManifestFromDrive(accessToken, tree.folders.assets_root);
+        if (
+          body.expectedRevision !== undefined &&
+          existingManifest.fileId &&
+          existingManifest.revision !== undefined &&
+          existingManifest.revision !== body.expectedRevision
+        ) {
+          throw new BuillyTransactionError(
+            'REVISION_CONFLICT',
+            `Assets manifest revision conflict: expected ${body.expectedRevision}, found ${existingManifest.revision}.`,
+            {
+              operationId,
+              details: {
+                resourceId: `${projectId}:assets_manifest`,
+                expectedRevision: body.expectedRevision,
+                actualRevision: existingManifest.revision,
+              },
+            }
+          );
+        }
 
-    const categoryFolder = await ensureFolderSegment(
-      accessToken,
-      tree.folders.assets_root,
-      categoryFolderLabel
-    );
+        await lock.verify();
 
-    const boundary = `builly_ast_${Date.now().toString(36)}`;
-    const metadata = {
-      name: fileName,
-      mimeType,
-      parents: [categoryFolder.id],
-    };
+        const categoryKey = CATEGORY_FOLDER_LABELS[body.category || ''] ? String(body.category) : 'other';
+        const categoryFolderLabel = CATEGORY_FOLDER_LABELS[categoryKey] || 'Other';
 
-    const head = new TextEncoder().encode(
-      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
-        metadata
-      )}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`
-    );
-    const tail = new TextEncoder().encode(`\r\n--${boundary}--`);
-    const multipartBody = new Uint8Array(head.length + fileBytes.length + tail.length);
-    multipartBody.set(head, 0);
-    multipartBody.set(fileBytes, head.length);
-    multipartBody.set(tail, head.length + fileBytes.length);
+        const categoryFolder = await ensureFolderSegment(
+          accessToken,
+          tree.folders.assets_root,
+          categoryFolderLabel,
+          {
+            operationId,
+            resourceId: `${projectId}:assets:${categoryKey}`,
+            resourceType: 'assets_category_folder',
+          }
+        );
 
-    const uploaded = await driveJson<{ id: string; name?: string }>(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
-      accessToken,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-        body: multipartBody,
+        const assetId = `ast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const boundary = `builly_ast_${Date.now().toString(36)}`;
+        const metadata = {
+          name: fileName,
+          mimeType,
+          parents: [categoryFolder.id],
+          appProperties: {
+            operation_id: operationId,
+            resource_id: assetId,
+            resource_type: 'asset_file',
+            org_id: access.project.org_id,
+            project_id: projectId,
+            schema_version: '1',
+          },
+        };
+
+        const head = new TextEncoder().encode(
+          `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
+            metadata
+          )}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`
+        );
+        const tail = new TextEncoder().encode(`\r\n--${boundary}--`);
+        const multipartBody = new Uint8Array(head.length + fileBytes.length + tail.length);
+        multipartBody.set(head, 0);
+        multipartBody.set(fileBytes, head.length);
+        multipartBody.set(tail, head.length + fileBytes.length);
+
+        const uploaded = await driveJson<{ id: string; name?: string }>(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,parents',
+          accessToken,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+            body: multipartBody,
+          }
+        );
+        await verifyDriveParent(accessToken, uploaded.id, categoryFolder.id, operationId).catch(
+          () => undefined
+        );
+
+        const nowIso = new Date().toISOString();
+        const entry: StoredAssetManifestEntry = {
+          id: assetId,
+          name: fileName,
+          size: formatBytes(fileBytes.byteLength),
+          bytes: fileBytes.byteLength,
+          type: mimeType.split('/')[0] || 'file',
+          mimeType,
+          category: categoryKey,
+          dimensions: body.dimensions,
+          altText: body.altText?.trim() || fileName.replace(/\.[^.]+$/, ''),
+          svgSanitized: mimeType === 'image/svg+xml',
+          svgMarkup: sanitizedSvg,
+          sourceOrigin: body.sourceOrigin || 'upload',
+          licenseNote: body.licenseNote?.trim() || 'User uploaded (verify usage rights)',
+          tags: Array.isArray(body.tags) && body.tags.length > 0 ? body.tags : [categoryKey],
+          driveFileId: uploaded.id,
+          driveFolder: `/Builly/${orgSlug}/${access.project.project_slug}/Assets/${categoryFolderLabel}`,
+          createdAt: nowIso.slice(0, 10),
+          updatedAt: nowIso,
+        };
+
+        const nextEntries = [entry, ...existingManifest.entries.filter((a) => a.id !== entry.id)];
+        const nextRevision = (existingManifest.revision || 0) + 1;
+        const savedManifest = await writeJsonFileInFolder(
+          accessToken,
+          tree.folders.assets_root,
+          ASSETS_MANIFEST_FILENAME,
+          {
+            schemaVersion: 1,
+            revision: nextRevision,
+            projectId,
+            lastOperationId: operationId,
+            updatedAt: nowIso,
+            assets: nextEntries,
+          },
+          {
+            operationId,
+            resourceId: `${projectId}:assets_manifest`,
+            resourceType: 'assets_manifest',
+            knownFileId: existingManifest.fileId || undefined,
+            expectedRevision: body.expectedRevision,
+            expectedEtag: expectedEtag || existingManifest.etag,
+          }
+        );
+
+        await upsertWorkspaceResource(env.DB, {
+          ownerId: ownerAccountId,
+          orgId: access.project.org_id,
+          projectId,
+          resourceKind: 'assets_manifest',
+          resourceKey: 'default',
+          driveFileId: savedManifest.fileId,
+          parentFolderId: tree.folders.assets_root,
+          title: ASSETS_MANIFEST_FILENAME,
+          canonicalRevision: nextRevision,
+          lastOperationId: operationId,
+        });
+
+        await writeManagementCache(env.DB, {
+          ownerId: ownerAccountId,
+          resourceType: 'assets_manifest',
+          resourceId: projectId,
+          canonicalRevision: nextRevision,
+          payload: {
+            manifestFileId: savedManifest.fileId,
+            assets: nextEntries,
+          },
+          ttlSeconds: 3600,
+        }).catch(() => undefined);
+
+        const contentUrl = sanitizedSvg
+          ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sanitizedSvg)}`
+          : `/api/console/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(
+              uploaded.id
+            )}/content`;
+
+        return Response.json(
+          {
+            ok: true,
+            operationId,
+            revision: nextRevision,
+            projectId,
+            folderId: tree.folders.assets_root,
+            manifestFileId: savedManifest.fileId,
+            asset: {
+              ...entry,
+              url: contentUrl,
+            },
+          },
+          { status: 201 }
+        );
       }
-    );
-
-    const nowIso = new Date().toISOString();
-    const assetId = `ast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    const entry: StoredAssetManifestEntry = {
-      id: assetId,
-      name: fileName,
-      size: formatBytes(fileBytes.byteLength),
-      bytes: fileBytes.byteLength,
-      type: mimeType.split('/')[0] || 'file',
-      mimeType,
-      category: categoryKey,
-      dimensions: body.dimensions,
-      altText: body.altText?.trim() || fileName.replace(/\.[^.]+$/, ''),
-      svgSanitized: mimeType === 'image/svg+xml',
-      svgMarkup: sanitizedSvg,
-      sourceOrigin: body.sourceOrigin || 'upload',
-      licenseNote: body.licenseNote?.trim() || 'User uploaded (verify usage rights)',
-      tags: Array.isArray(body.tags) && body.tags.length > 0 ? body.tags : [categoryKey],
-      driveFileId: uploaded.id,
-      driveFolder: `/Builly/${orgSlug}/${access.project.project_slug}/Assets/${categoryFolderLabel}`,
-      createdAt: nowIso.slice(0, 10),
-      updatedAt: nowIso,
-    };
-
-    const existingManifest = await readManifestFromDrive(accessToken, tree.folders.assets_root);
-    const nextEntries = [entry, ...existingManifest.entries.filter((a) => a.id !== entry.id)];
-    const savedManifest = await writeJsonFileInFolder(
-      accessToken,
-      tree.folders.assets_root,
-      ASSETS_MANIFEST_FILENAME,
-      {
-        schemaVersion: 1,
-        projectId,
-        updatedAt: nowIso,
-        assets: nextEntries,
-      }
-    );
-
-    await upsertWorkspaceResource(env.DB, {
-      ownerId: access.project.owner_id,
-      orgId: access.project.org_id,
-      projectId,
-      resourceKind: 'assets_manifest',
-      resourceKey: 'default',
-      driveFileId: savedManifest.fileId,
-      parentFolderId: tree.folders.assets_root,
-      title: ASSETS_MANIFEST_FILENAME,
-    });
-
-    const contentUrl = sanitizedSvg
-      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sanitizedSvg)}`
-      : `/api/console/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(
-          uploaded.id
-        )}/content`;
-
-    return Response.json(
-      {
-        ok: true,
-        projectId,
-        folderId: tree.folders.assets_root,
-        manifestFileId: savedManifest.fileId,
-        asset: {
-          ...entry,
-          url: contentUrl,
-        },
-      },
-      { status: 201 }
     );
   } catch (err) {
     return mapAssetError(err);
@@ -424,78 +586,132 @@ export async function handleUploadProjectAsset(
 }
 
 export async function handleDeleteProjectAsset(
-  _request: Request,
+  request: Request,
   env: WorkerEnv,
   session: VerifiedSession,
   projectId: string,
   assetIdOrDriveId: string
 ): Promise<Response> {
+  const operationId =
+    request.headers.get('Idempotency-Key')?.trim() || generateOperationId('op_ast_del');
+  const expectedEtag = request.headers.get('If-Match')?.trim() || undefined;
+
   try {
     const access = await requireProjectAccess(env.DB, projectId, session.ownerId, [
       'owner',
       'admin',
       'editor',
     ]);
-    const tree = await ensureProjectDriveTree(env, session, projectId);
-    const { accessToken } = await mintOwnerGoogleAccessToken(env, session.ownerId);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
 
-    const existingManifest = await readManifestFromDrive(accessToken, tree.folders.assets_root);
-    const target = existingManifest.entries.find(
-      (a) => a.id === assetIdOrDriveId || a.driveFileId === assetIdOrDriveId
-    );
-
-    if (
-      target?.driveFileId &&
-      !target.driveFileId.startsWith('local_') &&
-      !target.driveFileId.startsWith('drv_agent_')
-    ) {
-      await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(target.driveFileId)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ trashed: true }),
-        }
-      ).catch(() => undefined);
+    let accessToken: string;
+    try {
+      const minted = await mintOwnerGoogleAccessToken(env, ownerAccountId);
+      accessToken = minted.accessToken;
+    } catch {
+      throw new BuillyTransactionError(
+        'WRITE_DISABLED_OAUTH_UNAVAILABLE',
+        'Google Workspace connection is unavailable. Asset deletion is disabled in read-only mode.',
+        { operationId, status: 503, retryable: false }
+      );
     }
 
-    const nowIso = new Date().toISOString();
-    const remaining = existingManifest.entries.filter(
-      (a) => a.id !== assetIdOrDriveId && a.driveFileId !== assetIdOrDriveId
-    );
+    return await withMutationLock(
+      env,
+      { scopeKey: `project:${projectId}`, operationId },
+      async (lock) => {
+        const tree = await ensureProjectDriveTree(env, session, projectId, {
+          operationId,
+          accessTokenOverride: accessToken,
+        });
 
-    const savedManifest = await writeJsonFileInFolder(
-      accessToken,
-      tree.folders.assets_root,
-      ASSETS_MANIFEST_FILENAME,
-      {
-        schemaVersion: 1,
-        projectId,
-        updatedAt: nowIso,
-        assets: remaining,
+        const existingManifest = await readManifestFromDrive(accessToken, tree.folders.assets_root);
+        const target = existingManifest.entries.find(
+          (a) => a.id === assetIdOrDriveId || a.driveFileId === assetIdOrDriveId
+        );
+
+        await lock.verify();
+
+        if (
+          target?.driveFileId &&
+          !target.driveFileId.startsWith('local_') &&
+          !target.driveFileId.startsWith('drv_agent_')
+        ) {
+          await fetch(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(target.driveFileId)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ trashed: true }),
+            }
+          ).catch(() => undefined);
+        }
+
+        const nowIso = new Date().toISOString();
+        const remaining = existingManifest.entries.filter(
+          (a) => a.id !== assetIdOrDriveId && a.driveFileId !== assetIdOrDriveId
+        );
+        const nextRevision = (existingManifest.revision || 0) + 1;
+
+        const savedManifest = await writeJsonFileInFolder(
+          accessToken,
+          tree.folders.assets_root,
+          ASSETS_MANIFEST_FILENAME,
+          {
+            schemaVersion: 1,
+            revision: nextRevision,
+            projectId,
+            lastOperationId: operationId,
+            updatedAt: nowIso,
+            assets: remaining,
+          },
+          {
+            operationId,
+            resourceId: `${projectId}:assets_manifest`,
+            resourceType: 'assets_manifest',
+            knownFileId: existingManifest.fileId || undefined,
+            expectedEtag: expectedEtag || existingManifest.etag,
+          }
+        );
+
+        await upsertWorkspaceResource(env.DB, {
+          ownerId: ownerAccountId,
+          orgId: access.project.org_id,
+          projectId,
+          resourceKind: 'assets_manifest',
+          resourceKey: 'default',
+          driveFileId: savedManifest.fileId,
+          parentFolderId: tree.folders.assets_root,
+          title: ASSETS_MANIFEST_FILENAME,
+          canonicalRevision: nextRevision,
+          lastOperationId: operationId,
+        });
+
+        await writeManagementCache(env.DB, {
+          ownerId: ownerAccountId,
+          resourceType: 'assets_manifest',
+          resourceId: projectId,
+          canonicalRevision: nextRevision,
+          payload: {
+            manifestFileId: savedManifest.fileId,
+            assets: remaining,
+          },
+          ttlSeconds: 3600,
+        }).catch(() => undefined);
+
+        return Response.json({
+          ok: true,
+          operationId,
+          revision: nextRevision,
+          projectId,
+          deletedId: assetIdOrDriveId,
+          manifestFileId: savedManifest.fileId,
+        });
       }
     );
-
-    await upsertWorkspaceResource(env.DB, {
-      ownerId: access.project.owner_id,
-      orgId: access.project.org_id,
-      projectId,
-      resourceKind: 'assets_manifest',
-      resourceKey: 'default',
-      driveFileId: savedManifest.fileId,
-      parentFolderId: tree.folders.assets_root,
-      title: ASSETS_MANIFEST_FILENAME,
-    });
-
-    return Response.json({
-      ok: true,
-      projectId,
-      deletedId: assetIdOrDriveId,
-      manifestFileId: savedManifest.fileId,
-    });
   } catch (err) {
     return mapAssetError(err);
   }
@@ -509,12 +725,13 @@ export async function handleGetProjectAssetContent(
   driveFileId: string
 ): Promise<Response> {
   try {
-    await requireProjectAccess(env.DB, projectId, session.ownerId, [
+    const access = await requireProjectAccess(env.DB, projectId, session.ownerId, [
       'owner',
       'admin',
       'editor',
       'viewer',
     ]);
+    const ownerAccountId = access.project.owner_id || session.ownerId;
 
     const resourceRows = await env.DB.prepare(
       `SELECT resource_kind, drive_file_id FROM workspace_resources
@@ -529,7 +746,7 @@ export async function handleGetProjectAssetContent(
     const manifestId =
       (resourceRows.results || []).find((r) => r.resource_kind === 'assets_manifest')?.drive_file_id || '';
 
-    const { accessToken } = await mintOwnerGoogleAccessToken(env, session.ownerId);
+    const { accessToken } = await mintOwnerGoogleAccessToken(env, ownerAccountId);
     const manifest = assetsRootId
       ? await readManifestFromDrive(accessToken, assetsRootId, manifestId)
       : { fileId: '', entries: [] };

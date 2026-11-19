@@ -39,9 +39,10 @@ function getCacheStorage(): Cache | null {
   }
 }
 
-async function loadActiveRuntimeSnapshotFromDrive(
+async function loadActiveRuntimeSnapshot(
   env: WorkerEnv,
   site: {
+    site_id: string;
     site_slug: string;
     owner_id: string;
     active_publish_version: string;
@@ -55,14 +56,64 @@ async function loadActiveRuntimeSnapshotFromDrive(
     site.site_slug
   )}/runtime?v=${encodeURIComponent(site.active_publish_version)}`;
 
+  const warmEdgeCache = async (cleanSnapshot: Record<string, unknown>) => {
+    if (!cacheStorage) return;
+    const cacheRes = new Response(JSON.stringify(cleanSnapshot), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=300, s-maxage=3600',
+      },
+    });
+    await cacheStorage.put(new Request(versionedCacheUrl), cacheRes).catch(() => undefined);
+  };
+
+  // 1. Edge Cache
   if (cacheStorage) {
     const cached = await cacheStorage.match(new Request(versionedCacheUrl));
     if (cached) {
       const json = (await cached.json()) as Record<string, unknown>;
-      return { snapshot: json, cacheHit: true };
+      return { snapshot: scrubSnapshotForVisitor(json), cacheHit: true };
     }
   }
 
+  // 2. R2 immutable public artifacts bucket (zero OAuth required)
+  if (env.PUBLIC_ARTIFACTS && site.site_id && site.active_publish_version) {
+    const r2Key = `sites/${site.site_id}/published/${site.active_publish_version}.json`;
+    const r2Obj = await env.PUBLIC_ARTIFACTS.get(r2Key).catch(() => null);
+    if (r2Obj) {
+      const rawJson = (await r2Obj.json().catch(() => null)) as Record<string, unknown> | null;
+      if (rawJson) {
+        const cleanSnapshot = scrubSnapshotForVisitor(rawJson);
+        await warmEdgeCache(cleanSnapshot);
+        return { snapshot: cleanSnapshot, cacheHit: true };
+      }
+    }
+  }
+
+  // 3. Derived D1 public_runtime_artifacts index (continues serving even if owner OAuth disconnects)
+  if (site.site_id && site.active_publish_version) {
+    const artifactRow = await env.DB.prepare(
+      `SELECT snapshot_json FROM public_runtime_artifacts
+       WHERE site_id = ? AND publish_version = ?
+       LIMIT 1`
+    )
+      .bind(site.site_id, site.active_publish_version)
+      .first<{ snapshot_json: string }>()
+      .catch(() => null);
+
+    if (artifactRow?.snapshot_json) {
+      try {
+        const parsed = JSON.parse(artifactRow.snapshot_json) as Record<string, unknown>;
+        const cleanSnapshot = scrubSnapshotForVisitor(parsed);
+        await warmEdgeCache(cleanSnapshot);
+        return { snapshot: cleanSnapshot, cacheHit: true };
+      } catch {
+        // Fall through cleanly if JSON corrupted
+      }
+    }
+  }
+
+  // 4. Last-resort Drive fallback -> hydrate D1 public_runtime_artifacts + R2 + Edge Cache
   const { accessToken } = await mintOwnerGoogleAccessToken(env, site.owner_id);
   const driveRes = await fetch(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
@@ -76,16 +127,42 @@ async function loadActiveRuntimeSnapshotFromDrive(
 
   const rawJson = (await driveRes.json()) as Record<string, unknown>;
   const cleanSnapshot = scrubSnapshotForVisitor(rawJson);
+  const cleanJsonStr = JSON.stringify(cleanSnapshot);
 
-  if (cacheStorage) {
-    const cacheRes = new Response(JSON.stringify(cleanSnapshot), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=300, s-maxage=3600',
-      },
-    });
-    await cacheStorage.put(new Request(versionedCacheUrl), cacheRes).catch(() => undefined);
+  await env.DB.prepare(
+    `INSERT INTO public_runtime_artifacts (
+       site_id, publish_version, build_id, integrity_hash, snapshot_json, drive_file_id, indexed_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(site_id, publish_version) DO UPDATE SET
+       snapshot_json = excluded.snapshot_json,
+       indexed_at = excluded.indexed_at`
+  )
+    .bind(
+      site.site_id,
+      site.active_publish_version,
+      String(cleanSnapshot.buildId || ''),
+      String(cleanSnapshot.integrityHash || ''),
+      cleanJsonStr,
+      site.runtime_config_drive_file_id,
+      new Date().toISOString()
+    )
+    .run()
+    .catch(() => undefined);
+
+  if (env.PUBLIC_ARTIFACTS && site.site_id && site.active_publish_version) {
+    await env.PUBLIC_ARTIFACTS.put(
+      `sites/${site.site_id}/published/${site.active_publish_version}.json`,
+      cleanJsonStr,
+      {
+        httpMetadata: {
+          contentType: 'application/json',
+          cacheControl: 'public, max-age=31536000, immutable',
+        },
+      }
+    ).catch(() => undefined);
   }
+
+  await warmEdgeCache(cleanSnapshot);
 
   return { snapshot: cleanSnapshot, cacheHit: false };
 }
@@ -138,7 +215,7 @@ export async function handlePublicGetRuntimeSnapshot(
   }
 
   try {
-    const { snapshot, cacheHit } = await loadActiveRuntimeSnapshotFromDrive(env, site, request.url);
+    const { snapshot, cacheHit } = await loadActiveRuntimeSnapshot(env, site, request.url);
     return Response.json(
       {
         ok: true,
@@ -203,7 +280,7 @@ export async function handlePublicCmsQuery(
   const search = String(body.search || '').trim().toLowerCase().slice(0, 120);
 
   try {
-    const { snapshot } = await loadActiveRuntimeSnapshotFromDrive(env, site, request.url);
+    const { snapshot } = await loadActiveRuntimeSnapshot(env, site, request.url);
     const publicCms = snapshot.publicCms as
       | {
           contentTypes?: Array<{
@@ -379,7 +456,7 @@ export async function handlePublicFormSubmit(
   }
 
   // Validate submitted fields against published form schema
-  const { snapshot } = await loadActiveRuntimeSnapshotFromDrive(env, site, request.url);
+  const { snapshot } = await loadActiveRuntimeSnapshot(env, site, request.url);
   const publicForms = (snapshot.publicForms || {}) as Record<
     string,
     {
@@ -488,7 +565,7 @@ export async function handlePublicAssetProxy(
   }
 
   try {
-    const { snapshot } = await loadActiveRuntimeSnapshotFromDrive(env, site, request.url);
+    const { snapshot } = await loadActiveRuntimeSnapshot(env, site, request.url);
     const publicAssets = (snapshot.publicAssets || {}) as Record<
       string,
       { driveFileId?: string; mimeType?: string }

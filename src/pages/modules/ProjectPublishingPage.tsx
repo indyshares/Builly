@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Rocket,
+  ShieldAlert,
   XCircle,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -48,6 +49,9 @@ interface ProjectPublishingPageProps {
   accessToken: string;
   googleWorkspaceConnected: boolean;
   googleWorkspaceNeedsReauth: boolean;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   authBusy: boolean;
   onRefreshBootstrap: () => Promise<void>;
   onNavigate: (to: string, options?: { replace?: boolean }) => void;
@@ -62,12 +66,16 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
   accessToken,
   googleWorkspaceConnected,
   googleWorkspaceNeedsReauth,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   authBusy,
   onRefreshBootstrap,
   onNavigate,
   onSignOut,
 }) => {
   const { t, i18n } = useTranslation();
+  const writesLocked = Boolean(readOnly || project.status === 'archived');
 
   const [siteDoc, setSiteDoc] = useState<SiteDocument>(() =>
     storageService.loadSite(project.project_id)
@@ -194,6 +202,7 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
       await workspaceHierarchyClient.updateSiteInProject(accessToken, editingSite.site_id, {
         siteName: editSiteName.trim(),
         siteSlug: slugCheck.normalized,
+        expectedRevision: editingSite.canonical_revision,
       });
       setEditingSite(null);
       await onRefreshBootstrap();
@@ -206,6 +215,7 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
   };
 
   const handlePublish = async () => {
+    if (writesLocked) return;
     if (!selectedSite) {
       setErrorBanner(t('console.publishing.attachSiteFirst'));
       return;
@@ -222,6 +232,7 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
         supabaseAccessToken: accessToken,
         orgId: organization.org_id,
         projectId: project.project_id,
+        expectedRevision: selectedSite.canonical_revision,
       });
 
       const publishedSet = new Set(selectedPageIds);
@@ -355,6 +366,34 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
           </div>
         </div>
 
+        {(readOnly || outageStale) && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">{t('console.outage.readOnlyTitle')}</div>
+                <div className="text-amber-900">{t('console.outage.readOnlyDesc')}</div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {outageLastSyncedAt
+                    ? new Date(outageLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('/workspace')}
+              className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap shrink-0"
+            >
+              {t('console.outage.reconnectGoogleBtn')}
+            </button>
+          </section>
+        )}
+
         {notice && (
           <div
             role="status"
@@ -403,8 +442,9 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
               </h2>
               <button
                 type="button"
+                disabled={writesLocked}
                 onClick={() => setShowAddSite((v) => !v)}
-                className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1"
+                className="min-h-[34px] px-3 py-1 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1 disabled:opacity-50"
               >
                 <Plus className="w-3.5 h-3.5 text-[#6C2CEB]" />
                 <span>{t('console.projects.addSiteBtn')}</span>
@@ -646,7 +686,7 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={isPublishing || !preflight.passed || !selectedSite}
+                  disabled={isPublishing || !preflight.passed || !selectedSite || writesLocked}
                   onClick={() => void handlePublish()}
                   className="min-h-[40px] px-4 py-2 rounded-lg bg-[#6C2CEB] hover:bg-[#5920CB] text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
                 >
@@ -714,7 +754,10 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
                 <button
                   type="button"
                   disabled={
-                    savingExportToDrive || !googleWorkspaceConnected || googleWorkspaceNeedsReauth
+                    savingExportToDrive ||
+                    !googleWorkspaceConnected ||
+                    googleWorkspaceNeedsReauth ||
+                    writesLocked
                   }
                   onClick={() => void handleArchiveExportToDrive()}
                   className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#211B2E]/15 hover:bg-[#F7F6FA] text-xs font-semibold text-[#211B2E] inline-flex items-center gap-1.5 disabled:opacity-50"

@@ -26,6 +26,9 @@ export interface OrganizationRecord {
   org_slug: string;
   drive_folder_id: string;
   status: 'active' | 'archived';
+  canonical_revision?: number;
+  last_operation_id?: string;
+  drive_manifest_file_id?: string;
   created_at: string;
   updated_at: string;
   role?: OrganizationRole;
@@ -40,6 +43,9 @@ export interface ProjectRecord {
   description: string;
   drive_folder_id: string;
   status: 'active' | 'archived';
+  canonical_revision?: number;
+  last_operation_id?: string;
+  drive_manifest_file_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +71,9 @@ export interface SiteRecord {
   active_publish_version: string;
   active_build_id: string;
   drive_config_folder_id: string;
+  canonical_revision?: number;
+  last_operation_id?: string;
+  drive_manifest_file_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -82,8 +91,16 @@ export interface WorkspaceResourceRecord {
   parent_folder_id: string;
   title: string;
   status: 'active' | 'legacy' | 'archived';
+  canonical_revision?: number;
+  last_operation_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface DatasetSpreadsheetRef {
+  datasetKey: string;
+  spreadsheetId: string;
+  title: string;
 }
 
 export interface OnboardingLocalContext {
@@ -203,6 +220,92 @@ export interface ConsoleBootstrapResponse {
     status: string;
     activePublishVersion: string;
   }>;
+  pendingRepairsCount?: number;
+  needsReconciliationCount?: number;
+  needsReconciliationOps?: Array<{
+    operationId: string;
+    operationType: string;
+    updatedAt: string;
+    error?: { code: string; message: string; retryable: boolean };
+  }>;
+  readOnly?: boolean;
+  stale?: boolean;
+  unavailable?: boolean;
+  needsReconnect?: boolean;
+  lastSyncedAt?: string | null;
+  outageReason?: string | null;
+}
+
+export type OperationStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'retryable'
+  | 'needs_reconciliation'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface OperationStepRecord {
+  key: string;
+  status: 'pending' | 'completed' | 'failed' | 'needs_reconciliation';
+  resource_id?: string;
+  drive_file_id?: string;
+  parent_id?: string;
+  attempts?: number;
+  verified_at?: string;
+  detail?: string;
+}
+
+export interface OperationJournalRecord {
+  schema_version: 1;
+  operation_id: string;
+  operation_type: string;
+  account_id: string;
+  scope_key: string;
+  payload_hash: string;
+  status: OperationStatus;
+  target: Record<string, string | undefined>;
+  steps: OperationStepRecord[];
+  discovered_ids: Record<string, string>;
+  result?: unknown;
+  error?: { code: string; message: string; retryable: boolean };
+  fencing_token?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectionRepairRecord {
+  repair_id: string;
+  owner_id: string;
+  resource_type: string;
+  resource_id: string;
+  operation_id: string;
+  canonical_revision: number;
+  drive_file_id: string;
+  attempts: number;
+  status: 'pending' | 'completed' | 'failed';
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface D1RebuildSummary {
+  ok: boolean;
+  rootFolderId: string;
+  organizationsRebuilt: number;
+  projectsRebuilt: number;
+  sitesRebuilt: number;
+  publishedArtifactsRebuilt: number;
+  resourcesRebuilt: number;
+  rebuiltAt: string;
+}
+
+export interface OperationRecoveryResult {
+  ok: boolean;
+  operationId: string;
+  status: OperationStatus;
+  reconstructedFromMarkers?: boolean;
+  message?: string;
 }
 
 export type ProjectDriveFolderKind =

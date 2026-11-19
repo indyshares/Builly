@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Organization",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "organization_id",
+    "owner_account_id",
+    "name",
+    "status",
+    "folder_id",
+    "projects_folder_id",
+    "revision"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "organization_id": {
+      "type": "string"
+    },
+    "owner_account_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "archived",
+        "deleted"
+      ]
+    },
+    "folder_id": {
+      "type": "string"
+    },
+    "projects_folder_id": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

@@ -1,6 +1,8 @@
 export interface WorkerEnv {
   DB: D1Database;
   ASSETS?: Fetcher;
+  WORKSPACE_LOCK?: DurableObjectNamespace;
+  PUBLIC_ARTIFACTS?: R2Bucket;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY?: string;
   GOOGLE_OAUTH_CLIENT_ID: string;

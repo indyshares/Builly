@@ -29,10 +29,14 @@ import {
   handleMigrationPlan,
 } from './projectMigration';
 import {
+  archiveOrganization,
+  archiveProject,
   completeOnboarding,
   createOrganization,
   createProject,
   createSiteInProject,
+  deleteOrganization,
+  deleteProject,
   getConsoleBootstrap,
   HierarchyServiceError,
   inspectOnboardingState,
@@ -43,9 +47,23 @@ import {
   updateProjectModules,
   updateSiteInProject,
 } from '../services/workspaceHierarchyService';
+import {
+  listAccountOperationsFromD1,
+  readOperationFromD1,
+} from '../services/operationJournalService';
+import {
+  listPendingProjectionRepairs,
+  processProjectionRepairQueue,
+  rebuildD1FromDrive,
+  recoverOperationFromDrive,
+} from '../services/projectionRepairService';
+import { BuillyTransactionError } from '../services/transactionErrors';
 import { WorkerEnv } from '../types';
 
 function errorJson(err: unknown): Response {
+  if (err instanceof BuillyTransactionError) {
+    return Response.json(err.toSafeJson(), { status: err.status });
+  }
   if (err instanceof HierarchyServiceError) {
     return Response.json({ error: err.message, code: err.code }, { status: err.status });
   }
@@ -87,9 +105,56 @@ export async function handleConsoleApiRequest(
       >[2];
       const result = await completeOnboarding(env, session, {
         ...body,
+        operationId: body.operationId || body.operationKey || idempotencyKey,
         operationKey: body.operationKey || idempotencyKey,
       });
       return Response.json(result, { status: result.deduplicated ? 200 : 201 });
+    }
+
+    if (pathname === '/api/console/rebuild-projection' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { selectedRootFolderId?: string };
+      const summary = await rebuildD1FromDrive(env, session, {
+        selectedRootFolderId: body.selectedRootFolderId,
+      });
+      return Response.json(summary);
+    }
+
+    if (pathname === '/api/console/repair-queue' && request.method === 'GET') {
+      const repairs = await listPendingProjectionRepairs(env.DB, session.ownerId);
+      return Response.json({ ok: true, repairs });
+    }
+
+    if (pathname === '/api/console/repair-queue/process' && request.method === 'POST') {
+      const res = await processProjectionRepairQueue(env, session);
+      return Response.json({ ok: true, ...res });
+    }
+
+    if (pathname === '/api/console/operations' && request.method === 'GET') {
+      const operations = await listAccountOperationsFromD1(env.DB, session.ownerId, 40);
+      return Response.json({ ok: true, operations });
+    }
+
+    const opRecoverMatch = pathname.match(/^\/api\/console\/operations\/([^/]+)\/recover$/);
+    if (opRecoverMatch && request.method === 'POST') {
+      const opId = decodeURIComponent(opRecoverMatch[1]);
+      const body = (await request.json().catch(() => ({}))) as { selectedRootFolderId?: string };
+      const result = await recoverOperationFromDrive(env, session, opId, {
+        selectedRootFolderId: body.selectedRootFolderId,
+      });
+      return Response.json(result);
+    }
+
+    const opGetMatch = pathname.match(/^\/api\/console\/operations\/([^/]+)$/);
+    if (opGetMatch && request.method === 'GET') {
+      const opId = decodeURIComponent(opGetMatch[1]);
+      const record = await readOperationFromD1(env.DB, session.ownerId, opId);
+      if (!record) {
+        return Response.json(
+          { error: `Operation "${opId}" not found.`, code: 'RESOURCE_NOT_FOUND' },
+          { status: 404 }
+        );
+      }
+      return Response.json({ ok: true, operation: record.journal });
     }
 
     if (pathname === '/api/console/migration/plan' && request.method === 'POST') {
@@ -108,20 +173,56 @@ export async function handleConsoleApiRequest(
       const body = (await request.json().catch(() => ({}))) as {
         name?: string;
         operationKey?: string;
+        operationId?: string;
       };
       const result = await createOrganization(env, session, {
         name: body.name || '',
+        operationId: body.operationId || body.operationKey || idempotencyKey,
         operationKey: body.operationKey || idempotencyKey,
       });
       return Response.json(result, { status: result.deduplicated ? 200 : 201 });
     }
 
-    const orgUpdateMatch = pathname.match(/^\/api\/console\/organizations\/([^/]+)$/);
-    if (orgUpdateMatch && request.method === 'PATCH') {
-      const orgId = decodeURIComponent(orgUpdateMatch[1]);
-      const body = (await request.json().catch(() => ({}))) as { name?: string };
-      const result = await updateOrganization(env, session, orgId, body);
+    const orgArchiveMatch = pathname.match(/^\/api\/console\/organizations\/([^/]+)\/archive$/);
+    if (orgArchiveMatch && (request.method === 'POST' || request.method === 'PATCH')) {
+      const orgId = decodeURIComponent(orgArchiveMatch[1]);
+      const body = (await request.json().catch(() => ({}))) as {
+        expectedRevision?: number;
+        operationId?: string;
+      };
+      const result = await archiveOrganization(env, session, orgId, {
+        expectedRevision: body.expectedRevision,
+        operationId: body.operationId || idempotencyKey,
+      });
       return Response.json(result);
+    }
+
+    const orgUpdateMatch = pathname.match(/^\/api\/console\/organizations\/([^/]+)$/);
+    if (orgUpdateMatch) {
+      const orgId = decodeURIComponent(orgUpdateMatch[1]);
+      if (request.method === 'PATCH') {
+        const body = (await request.json().catch(() => ({}))) as {
+          name?: string;
+          expectedRevision?: number;
+          operationId?: string;
+        };
+        const result = await updateOrganization(env, session, orgId, {
+          ...body,
+          operationId: body.operationId || idempotencyKey,
+        });
+        return Response.json(result);
+      }
+      if (request.method === 'DELETE') {
+        const body = (await request.json().catch(() => ({}))) as {
+          confirmPermanentDelete?: boolean;
+          operationId?: string;
+        };
+        const result = await deleteOrganization(env, session, orgId, {
+          confirmPermanentDelete: body.confirmPermanentDelete,
+          operationId: body.operationId || idempotencyKey,
+        });
+        return Response.json(result);
+      }
     }
 
     const orgProjectsMatch = pathname.match(/^\/api\/console\/organizations\/([^/]+)\/projects$/);
@@ -132,25 +233,59 @@ export async function handleConsoleApiRequest(
         description?: string;
         enabledModules?: ProjectModuleKey[];
         operationKey?: string;
+        operationId?: string;
       };
       const result = await createProject(env, session, orgId, {
         name: body.name || '',
         description: body.description,
         enabledModules: body.enabledModules,
+        operationId: body.operationId || body.operationKey || idempotencyKey,
         operationKey: body.operationKey || idempotencyKey,
       });
       return Response.json(result, { status: result.deduplicated ? 200 : 201 });
     }
 
-    const projectUpdateMatch = pathname.match(/^\/api\/console\/projects\/([^/]+)$/);
-    if (projectUpdateMatch && request.method === 'PATCH') {
-      const projectId = decodeURIComponent(projectUpdateMatch[1]);
+    const projectArchiveMatch = pathname.match(/^\/api\/console\/projects\/([^/]+)\/archive$/);
+    if (projectArchiveMatch && (request.method === 'POST' || request.method === 'PATCH')) {
+      const projectId = decodeURIComponent(projectArchiveMatch[1]);
       const body = (await request.json().catch(() => ({}))) as {
-        name?: string;
-        description?: string;
+        expectedRevision?: number;
+        operationId?: string;
       };
-      const result = await updateProject(env, session, projectId, body);
+      const result = await archiveProject(env, session, projectId, {
+        expectedRevision: body.expectedRevision,
+        operationId: body.operationId || idempotencyKey,
+      });
       return Response.json(result);
+    }
+
+    const projectUpdateMatch = pathname.match(/^\/api\/console\/projects\/([^/]+)$/);
+    if (projectUpdateMatch) {
+      const projectId = decodeURIComponent(projectUpdateMatch[1]);
+      if (request.method === 'PATCH') {
+        const body = (await request.json().catch(() => ({}))) as {
+          name?: string;
+          description?: string;
+          expectedRevision?: number;
+          operationId?: string;
+        };
+        const result = await updateProject(env, session, projectId, {
+          ...body,
+          operationId: body.operationId || idempotencyKey,
+        });
+        return Response.json(result);
+      }
+      if (request.method === 'DELETE') {
+        const body = (await request.json().catch(() => ({}))) as {
+          confirmPermanentDelete?: boolean;
+          operationId?: string;
+        };
+        const result = await deleteProject(env, session, projectId, {
+          confirmPermanentDelete: body.confirmPermanentDelete,
+          operationId: body.operationId || idempotencyKey,
+        });
+        return Response.json(result);
+      }
     }
 
     const projectModulesMatch = pathname.match(/^\/api\/console\/projects\/([^/]+)\/modules$/);
@@ -158,8 +293,13 @@ export async function handleConsoleApiRequest(
       const projectId = decodeURIComponent(projectModulesMatch[1]);
       const body = (await request.json().catch(() => ({}))) as {
         modules?: Array<{ moduleKey: ProjectModuleKey; enabled: boolean }>;
+        expectedRevision?: number;
+        operationId?: string;
       };
-      const result = await updateProjectModules(env, session, projectId, body.modules || []);
+      const result = await updateProjectModules(env, session, projectId, body.modules || [], {
+        expectedRevision: body.expectedRevision,
+        operationId: body.operationId || idempotencyKey,
+      });
       return Response.json(result);
     }
 
@@ -170,10 +310,12 @@ export async function handleConsoleApiRequest(
         siteName?: string;
         siteSlug?: string;
         operationKey?: string;
+        operationId?: string;
       };
       const result = await createSiteInProject(env, session, projectId, {
         siteName: body.siteName || '',
         siteSlug: body.siteSlug || '',
+        operationId: body.operationId || body.operationKey || idempotencyKey,
         operationKey: body.operationKey || idempotencyKey,
       });
       return Response.json(result, { status: result.deduplicated ? 200 : 201 });
@@ -290,8 +432,13 @@ export async function handleConsoleApiRequest(
       const body = (await request.json().catch(() => ({}))) as {
         siteName?: string;
         siteSlug?: string;
+        expectedRevision?: number;
+        operationId?: string;
       };
-      const result = await updateSiteInProject(env, session, siteId, body);
+      const result = await updateSiteInProject(env, session, siteId, {
+        ...body,
+        operationId: body.operationId || idempotencyKey,
+      });
       return Response.json(result);
     }
 

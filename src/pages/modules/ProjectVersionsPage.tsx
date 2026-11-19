@@ -8,6 +8,7 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  ShieldAlert,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ProjectModuleHeader } from '../../components/console/ProjectModuleHeader';
@@ -28,6 +29,9 @@ interface ProjectVersionsPageProps {
   modules: ProjectModuleRecord[];
   sites: SiteRecord[];
   accessToken: string;
+  readOnly?: boolean;
+  outageStale?: boolean;
+  outageLastSyncedAt?: string | null;
   authBusy: boolean;
   onRefreshBootstrap: () => Promise<void>;
   onNavigate: (to: string, options?: { replace?: boolean }) => void;
@@ -53,12 +57,16 @@ export const ProjectVersionsPage: React.FC<ProjectVersionsPageProps> = ({
   modules,
   sites,
   accessToken,
+  readOnly = false,
+  outageStale = false,
+  outageLastSyncedAt = null,
   authBusy,
   onRefreshBootstrap,
   onNavigate,
   onSignOut,
 }) => {
   const { t } = useTranslation();
+  const writesLocked = Boolean(readOnly || project.status === 'archived');
 
   const [loading, setLoading] = useState(false);
   const [serverReleases, setServerReleases] = useState<
@@ -261,6 +269,34 @@ export const ProjectVersionsPage: React.FC<ProjectVersionsPageProps> = ({
           </button>
         </div>
 
+        {(readOnly || outageStale) && (
+          <section
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <div className="font-semibold text-amber-950">{t('console.outage.readOnlyTitle')}</div>
+                <div className="text-amber-900">{t('console.outage.readOnlyDesc')}</div>
+                <div className="font-mono tabular-nums text-[11px] text-amber-800">
+                  {t('console.outage.lastSyncedLabel')}:{' '}
+                  {outageLastSyncedAt
+                    ? new Date(outageLastSyncedAt).toLocaleString()
+                    : t('console.cms.neverSynced')}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('/workspace')}
+              className="min-h-[34px] px-3 py-1 rounded-lg bg-[#211B2E] text-white text-xs font-semibold whitespace-nowrap shrink-0"
+            >
+              {t('console.outage.reconnectGoogleBtn')}
+            </button>
+          </section>
+        )}
+
         {notice && (
           <div
             role="status"
@@ -366,8 +402,9 @@ export const ProjectVersionsPage: React.FC<ProjectVersionsPageProps> = ({
                         ) : (
                           <button
                             type="button"
+                            disabled={writesLocked}
                             onClick={() => setConfirmRollback(row)}
-                            className="min-h-[32px] px-3 py-1 rounded bg-[#211B2E] hover:bg-[#322944] text-white font-semibold inline-flex items-center gap-1"
+                            className="min-h-[32px] px-3 py-1 rounded bg-[#211B2E] hover:bg-[#322944] text-white font-semibold inline-flex items-center gap-1 disabled:opacity-50"
                           >
                             <RotateCcw className="w-3 h-3" />
                             <span>{t('console.versions.rollbackBtn')}</span>

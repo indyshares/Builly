@@ -13,13 +13,27 @@ run_worker_first = ["/api/*"]
 [observability]
 enabled = true
 
+# Cloudflare Durable Object lock coordinator (account / org / project / site scopes)
+[[durable_objects.bindings]]
+name = "WORKSPACE_LOCK"
+class_name = "WorkspaceLockDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorkspaceLockDO"]
+
+# Optional R2 bucket for immutable public snapshots & published assets (zero secrets):
+# [[r2_buckets]]
+# binding = "PUBLIC_ARTIFACTS"
+# bucket_name = "builly-public-artifacts"
+
 # Cloudflare D1 Registry & Encrypted OAuth Vault
 # Create with: npx wrangler d1 create builly_oauth_vault
 # Then replace database_id below with your generated D1 UUID before deploying.
 [[d1_databases]]
 binding = "DB"
-database_name = "builly_oauth_vault"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_name = "builly"
+database_id = "583c5b8a-e367-40f3-9403-ea03dcf25035"
 migrations_dir = "worker/migrations"
 
 [vars]
