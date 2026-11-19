@@ -1,3 +1,4 @@
+import { ApiConfigurationError, buildConsoleApiUrl } from '../../config/apiConfig';
 import { ENV_CONFIG } from '../../config/env';
 import {
   CompleteOnboardingInput,
@@ -36,14 +37,6 @@ import { WorkerApiError } from '../workspace-connection/workspaceApiClient';
 
 const STORAGE_KEY_SITE = 'indyshares_portfolio_site_v2';
 const STORAGE_KEY_WORKSPACE = 'indyshares_google_workspace_v2';
-
-function buildWorkerUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  if (!ENV_CONFIG.workerApiUrl) {
-    return normalizedPath;
-  }
-  return `${ENV_CONFIG.workerApiUrl}${normalizedPath}`;
-}
 
 export function createOperationKey(prefix = 'op'): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -142,9 +135,26 @@ async function requestConsoleJson<T>(
     throw new WorkerApiError('Missing Builly owner session token.', 401, 'UNAUTHORIZED');
   }
 
+  let requestUrl: string;
+  try {
+    requestUrl = buildConsoleApiUrl(path);
+  } catch (err) {
+    const code = err instanceof ApiConfigurationError ? err.code : 'INVALID_API_CONFIGURATION';
+    throw new WorkerApiError(
+      err instanceof Error ? err.message : 'Invalid Console API configuration.',
+      500,
+      code
+    );
+  }
+
+  const method = (init.method || 'GET').toUpperCase();
+  if (import.meta.env.DEV) {
+    console.debug('[ConsoleAPI]', method, requestUrl);
+  }
+
   let res: Response;
   try {
-    res = await fetch(buildWorkerUrl(path), {
+    res = await fetch(requestUrl, {
       ...init,
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -155,27 +165,77 @@ async function requestConsoleJson<T>(
       },
     });
   } catch {
+    let targetOrigin = ENV_CONFIG.workerApiUrl || requestUrl;
+    let isCrossOrigin = false;
+    try {
+      const parsed = new URL(requestUrl);
+      targetOrigin = parsed.origin;
+      isCrossOrigin =
+        typeof window !== 'undefined' &&
+        Boolean(window.location?.origin) &&
+        parsed.origin !== window.location.origin;
+    } catch {
+      // Keep fallback label
+    }
+
     throw new WorkerApiError(
-      ENV_CONFIG.isWorkerConfigured
-        ? `Could not reach Builly Worker API at ${ENV_CONFIG.workerApiUrl}.`
-        : 'Cloudflare Worker API URL is not configured (VITE_WORKER_API_URL).',
+      isCrossOrigin
+        ? `Network or CORS failure reaching Builly Worker API at ${targetOrigin}. Verify the Worker is deployed and allows origin ${window.location.origin}.`
+        : `Could not reach Builly Worker API at ${targetOrigin}.`,
       503,
       'WORKER_UNREACHABLE'
     );
   }
 
+  const status = res.status;
   const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
+  const rawBody = await res.text();
+
+  if (!contentType.toLowerCase().includes('application/json')) {
+    let targetOrigin = ENV_CONFIG.workerApiUrl || requestUrl;
+    try {
+      targetOrigin = new URL(requestUrl).origin;
+    } catch {
+      // Ignore
+    }
+
+    if (status === 404) {
+      throw new WorkerApiError(
+        `Console API endpoint not found (404) at ${requestUrl}. Verify Worker route registration.`,
+        404,
+        'WORKER_ROUTE_NOT_FOUND'
+      );
+    }
+    if (status === 401) {
+      throw new WorkerApiError(
+        `Authentication required or session expired (401) calling ${requestUrl}.`,
+        401,
+        'UNAUTHORIZED'
+      );
+    }
+    if (status === 403) {
+      throw new WorkerApiError(
+        `Access forbidden (403) calling ${requestUrl}.`,
+        403,
+        'FORBIDDEN'
+      );
+    }
+    if (status >= 500) {
+      throw new WorkerApiError(
+        `Worker server error (${status}) at ${requestUrl}.`,
+        status,
+        'WORKER_SERVER_ERROR'
+      );
+    }
+
     throw new WorkerApiError(
-      ENV_CONFIG.isWorkerConfigured
-        ? `Expected JSON response from Worker at ${ENV_CONFIG.workerApiUrl}, received ${res.status}.`
-        : 'Cloudflare Worker backend is not deployed at this origin. Deploy /worker and set VITE_WORKER_API_URL.',
-      res.status || 503,
+      `Expected JSON response from Worker at ${targetOrigin}, received ${status || 'unknown'} (${contentType || 'unknown content-type'}).`,
+      status || 503,
       'WORKER_UNAVAILABLE'
     );
   }
 
-  const payload = (await res.json()) as T & {
+  let payload: T & {
     error?: string;
     code?: string;
     operationId?: string;
@@ -183,11 +243,40 @@ async function requestConsoleJson<T>(
     projectionStatus?: string;
     details?: Record<string, unknown>;
   };
-  if (!res.ok) {
+
+  try {
+    payload = JSON.parse(rawBody) as T & {
+      error?: string;
+      code?: string;
+      operationId?: string;
+      retryable?: boolean;
+      projectionStatus?: string;
+      details?: Record<string, unknown>;
+    };
+  } catch {
     throw new WorkerApiError(
-      payload.error || `Console API request failed (${res.status}).`,
-      res.status,
-      payload.code || 'CONSOLE_API_ERROR',
+      `Malformed JSON response from Worker (${status}) at ${requestUrl}.`,
+      status || 502,
+      'INVALID_WORKER_JSON'
+    );
+  }
+
+  if (!res.ok) {
+    const defaultCode =
+      status === 401
+        ? 'UNAUTHORIZED'
+        : status === 403
+          ? 'FORBIDDEN'
+          : status === 404
+            ? 'RESOURCE_NOT_FOUND'
+            : status >= 500
+              ? 'WORKER_SERVER_ERROR'
+              : 'CONSOLE_API_ERROR';
+
+    throw new WorkerApiError(
+      payload.error || `Console API request failed (${status}).`,
+      status,
+      payload.code || defaultCode,
       {
         operationId: payload.operationId,
         retryable: payload.retryable,

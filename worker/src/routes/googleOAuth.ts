@@ -8,10 +8,10 @@ import {
 import { WorkerEnv } from '../types';
 
 function resolveAllowedOrigin(request: Request, env: WorkerEnv): string | null {
-  const reqOrigin = request.headers.get('Origin') || '';
+  const reqOrigin = (request.headers.get('Origin') || '').trim().replace(/\/+$/, '');
   const allowed = (env.ALLOWED_FRONTEND_ORIGINS || '')
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
   if (allowed.length === 0 || !reqOrigin || !allowed.includes(reqOrigin)) {
     return null;

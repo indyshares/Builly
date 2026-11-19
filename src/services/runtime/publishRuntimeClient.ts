@@ -1,3 +1,4 @@
+import { buildConsoleApiUrl, CONSOLE_API_CONFIG } from '../../config/apiConfig';
 import { ENV_CONFIG } from '../../config/env';
 import { createOperationKey } from '../../features/console/workspaceHierarchyClient';
 import { WorkerApiError } from '../../features/workspace-connection/workspaceApiClient';
@@ -26,7 +27,7 @@ export interface SharedRuntimePublishOutcome {
 }
 
 function resolveWorkerBaseUrl(): string {
-  return ENV_CONFIG.workerApiUrl || '';
+  return CONSOLE_API_CONFIG.origin || ENV_CONFIG.workerApiUrl || '';
 }
 
 export async function publishSiteToSharedRuntime(params: {
@@ -94,7 +95,7 @@ export async function publishSiteToSharedRuntime(params: {
         : [];
 
       const res = await fetch(
-        `${workerBase}/api/owner/sites/${encodeURIComponent(site.portfolioSlug)}/publish`,
+        buildConsoleApiUrl(`/api/owner/sites/${encodeURIComponent(site.portfolioSlug)}/publish`),
         {
           method: 'POST',
           headers: {
@@ -239,7 +240,7 @@ export async function rollbackSiteOnSharedRuntime(params: {
   const operationId = createOperationKey('rb');
   try {
     const res = await fetch(
-      `${workerBase}/api/owner/sites/${encodeURIComponent(siteSlug)}/rollback`,
+      buildConsoleApiUrl(`/api/owner/sites/${encodeURIComponent(siteSlug)}/rollback`),
       {
         method: 'POST',
         headers: {
@@ -290,7 +291,7 @@ export async function loadPublicRuntimeSnapshot(
   if (workerBase || typeof window !== 'undefined') {
     try {
       const res = await fetch(
-        `${workerBase}/api/public/sites/${encodeURIComponent(normalizedSlug)}/runtime`,
+        buildConsoleApiUrl(`/api/public/sites/${encodeURIComponent(normalizedSlug)}/runtime`),
         { headers: { Accept: 'application/json' } }
       );
       const contentType = res.headers.get('content-type') || '';
@@ -349,9 +350,11 @@ export async function submitPublicRuntimeForm(params: {
     .slice(2, 7)}`;
 
   const res = await fetch(
-    `${workerBase}/api/public/sites/${encodeURIComponent(
-      params.siteSlug
-    )}/forms/${encodeURIComponent(params.formId)}/submit`,
+    buildConsoleApiUrl(
+      `/api/public/sites/${encodeURIComponent(
+        params.siteSlug
+      )}/forms/${encodeURIComponent(params.formId)}/submit`
+    ),
     {
       method: 'POST',
       headers: {

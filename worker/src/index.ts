@@ -27,10 +27,10 @@ import { WorkerEnv } from './types';
 export { WorkspaceLockDO } from './do/WorkspaceLockDO';
 
 function withCors(request: Request, env: WorkerEnv, response: Response): Response {
-  const reqOrigin = request.headers.get('Origin') || '';
+  const reqOrigin = (request.headers.get('Origin') || '').trim().replace(/\/+$/, '');
   const allowed = (env.ALLOWED_FRONTEND_ORIGINS || '')
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
   const headers = new Headers(response.headers);

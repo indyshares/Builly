@@ -1,3 +1,5 @@
+import { CONSOLE_API_CONFIG } from './apiConfig';
+
 const DEFAULT_WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.file',
@@ -39,7 +41,6 @@ function isValidSupabaseAnonKey(key: string): boolean {
 const env = import.meta.env;
 const supabaseUrl = cleanPublicEnv(env.VITE_SUPABASE_URL);
 const supabaseAnonKey = cleanPublicEnv(env.VITE_SUPABASE_ANON_KEY);
-const workerApiUrl = cleanPublicEnv(env.VITE_WORKER_API_URL).replace(/\/+$/, '');
 
 export const ENV_CONFIG = {
   appUrl:
@@ -53,7 +54,9 @@ export const ENV_CONFIG = {
   supabaseUrl,
   supabaseAnonKey,
   isSupabaseConfigured: isValidSupabaseUrl(supabaseUrl) && isValidSupabaseAnonKey(supabaseAnonKey),
-  // Cloudflare Worker API base URL (empty means same-origin /api/* or Worker not configured)
-  workerApiUrl,
-  isWorkerConfigured: workerApiUrl.length > 0,
+  // Normalized absolute Worker / Console API origin (never a bare hostname or relative path)
+  consoleApiBaseUrl: CONSOLE_API_CONFIG.origin,
+  workerApiUrl: CONSOLE_API_CONFIG.origin,
+  isWorkerConfigured: CONSOLE_API_CONFIG.isConfigured,
+  workerConfigError: CONSOLE_API_CONFIG.error?.message || null,
 } as const;

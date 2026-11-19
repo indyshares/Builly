@@ -1,3 +1,4 @@
+import { buildConsoleApiUrl } from '../../config/apiConfig';
 import { ENV_CONFIG } from '../../config/env';
 
 export interface SafeWorkspaceAccount {
@@ -62,11 +63,7 @@ export class WorkerApiError extends Error {
 }
 
 function buildWorkerUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  if (!ENV_CONFIG.workerApiUrl) {
-    return normalizedPath;
-  }
-  return `${ENV_CONFIG.workerApiUrl}${normalizedPath}`;
+  return buildConsoleApiUrl(path);
 }
 
 async function parseJsonSafe<T>(res: Response): Promise<T> {
