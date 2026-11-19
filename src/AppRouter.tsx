@@ -8,6 +8,8 @@ import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { PublicSiteRuntimePage } from './pages/PublicSiteRuntimePage';
 import { WorkspaceConnectPage } from './pages/WorkspaceConnectPage';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
+import { TermsOfServicePage } from './pages/TermsOfServicePage';
 import { BuillyLogo } from './components/common/BuillyLogo';
 import { loadActiveProjectContext } from './services/storageService';
 import {
@@ -31,6 +33,14 @@ const RouterContent: React.FC = () => {
         onNavigate={navigate}
       />
     );
+  }
+
+  if (route.kind === 'privacy') {
+    return <PrivacyPolicyPage onNavigate={navigate} />;
+  }
+
+  if (route.kind === 'terms') {
+    return <TermsOfServicePage onNavigate={navigate} />;
   }
 
   if (route.kind === 'landing') {

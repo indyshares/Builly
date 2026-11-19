@@ -102,6 +102,8 @@ export const RESERVED_SYSTEM_SLUGS: ReadonlySet<string> = new Set([
   'static',
   'public',
   's',
+  'privacy',
+  'terms',
 ]);
 
 export function validatePortfolioSlug(raw: string): { valid: boolean; normalized: string; error?: string } {

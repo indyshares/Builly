@@ -905,6 +905,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
             </a>
             <button
               type="button"
+              onClick={() => onNavigate('/privacy')}
+              className="hover:text-[#211B2E]"
+            >
+              Privacy
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('/terms')}
+              className="hover:text-[#211B2E]"
+            >
+              Terms
+            </button>
+            <button
+              type="button"
               onClick={() => onNavigate(isAuthenticated ? '/console' : buildLoginUrl('/console'))}
               className="hover:text-[#211B2E]"
             >

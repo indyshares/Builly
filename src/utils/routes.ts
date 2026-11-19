@@ -8,7 +8,9 @@ export type AppRouteKind =
   | 'console'
   | 'workspace'
   | 'builder'
-  | 'public-site';
+  | 'public-site'
+  | 'privacy'
+  | 'terms';
 
 export interface AppRouteState {
   kind: AppRouteKind;
@@ -220,6 +222,8 @@ export function resolveAppRouteKind(pathname: string): AppRouteKind {
   if (normalized === '/') return 'landing';
   if (normalized === '/login') return 'login';
   if (normalized === '/auth/callback') return 'auth-callback';
+  if (normalized === '/privacy') return 'privacy';
+  if (normalized === '/terms') return 'terms';
   if (
     CONSOLE_PREFIXES.some(
       (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)
