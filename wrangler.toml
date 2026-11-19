@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "builly-workspace"
+name = "builly-project"
 main = "worker/src/index.ts"
 compatibility_date = "2026-10-01"
 
@@ -41,7 +41,7 @@ GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://
 
 # Configure per environment in Cloudflare Dashboard -> Settings -> Variables and Secrets
 # (or uncomment below if deploying directly via CLI):
-# SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
+# SUPABASE_URL = "https://mzaybsijzwrtwemwqagl.supabase.co"
 # ALLOWED_FRONTEND_ORIGINS = "https://builly.indyshares.com,http://localhost:3000,http://localhost:8787"
 # GOOGLE_OAUTH_REDIRECT_URI = "https://builly.indyshares.com/api/google/oauth/callback"
 
