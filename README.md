@@ -1,3 +1,4 @@
+Thai | [English](README-EN.md)
 ```markdown name=README.md
 # Builly
 
