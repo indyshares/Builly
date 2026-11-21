@@ -570,7 +570,7 @@ git checkout -b feature/my-feature
 3. พัฒนาและแก้ไขโค้ด
 4. รัน typecheck และ test
 
-```bash
+```bash 
 npm run lint
 npm run typecheck:worker
 npm run test
