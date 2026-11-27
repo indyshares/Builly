@@ -1,24 +1,25 @@
+import type { AuthStore } from './services/buillyAuth';
+
 export interface WorkerEnv {
   DB: D1Database;
   ASSETS?: Fetcher;
   WORKSPACE_LOCK?: DurableObjectNamespace;
   PUBLIC_ARTIFACTS?: R2Bucket;
-  SUPABASE_URL: string;
-  SUPABASE_ANON_KEY?: string;
   GOOGLE_OAUTH_CLIENT_ID: string;
   GOOGLE_OAUTH_CLIENT_SECRET: string;
   GOOGLE_OAUTH_REDIRECT_URI: string;
   GOOGLE_WORKSPACE_SCOPES: string;
   TOKEN_ENCRYPTION_KEY: string;
   ALLOWED_FRONTEND_ORIGINS?: string;
-  VITE_GOOGLE_OAUTH_CLIENT_ID?: string;
-  VITE_GOOGLE_WORKSPACE_SCOPES?: string;
-  VITE_WORKER_API_URL?: string;
+  /** Test seam only; production always uses the D1 adapter. */
+  AUTH_STORE?: AuthStore;
 }
 
 export interface VerifiedSession {
   ownerId: string;
   email: string;
+  accountId?: string;
+  sessionId?: string;
 }
 
 export interface StoredCredentialRow {

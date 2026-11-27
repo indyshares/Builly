@@ -117,7 +117,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({ onNavigate
                   We collect only the minimum information necessary to operate Builly securely and reliably:
                 </p>
                 <ul className="list-disc pl-5 space-y-2 text-sm text-[#4A435C]">
-                  <li><strong>Account & Authentication Information:</strong> Your user ID, email address, and display name provided during Supabase Authentication.</li>
+                  <li><strong>Account & Authentication Information:</strong> Your user ID, email address, and display name provided during Google sign-in through Builly.</li>
                   <li><strong>Google Workspace Connection Metadata:</strong> Basic profile info (name, email, avatar) and authorized OAuth scopes associated with your connected Google account.</li>
                   <li><strong>Workspace & Operational Logs:</strong> Idempotency keys, operation journals, and projection repair queue records needed to ensure transaction safety and data synchronization.</li>
                 </ul>
@@ -158,7 +158,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({ onNavigate
                 <ul className="list-disc pl-5 space-y-2 text-sm text-[#4A435C]">
                   <li>Your user-owned business data remains in your Google Drive (`My Drive/Builly/`).</li>
                   <li>Cloudflare D1 is utilized exclusively as a derived, rebuildable operational index and runtime registry.</li>
-                  <li>Supabase Auth is used strictly for identity and session management.</li>
+                  <li>Builly owns identity and session management directly through Google OAuth 2.0 / OpenID Connect on Cloudflare Workers.</li>
                 </ul>
               </section>
 
@@ -217,7 +217,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({ onNavigate
                   เราจัดเก็บเฉพาะข้อมูลที่จำเป็นขั้นต่ำเพื่อให้สามารถใช้งาน Builly ได้อย่างปลอดภัยและเสถียร:
                 </p>
                 <ul className="list-disc pl-5 space-y-2 text-sm text-[#4A435C]">
-                  <li><strong>ข้อมูลบัญชีและการยืนยันตัวตน:</strong> รหัสผู้ใช้ ที่อยู่อีเมล และชื่อที่แสดงที่ได้รับระหว่างการยืนยันตัวตนผ่าน Supabase Authentication</li>
+                  <li><strong>ข้อมูลบัญชีและการยืนยันตัวตน:</strong> รหัสผู้ใช้ ที่อยู่อีเมล และชื่อที่แสดงที่ได้รับระหว่างการเข้าสู่ระบบผ่าน Google โดย Builly</li>
                   <li><strong>ข้อมูลเมตาการเชื่อมต่อ Google Workspace:</strong> ข้อมูลโปรไฟล์พื้นฐาน (ชื่อ อีเมล รูปโปรไฟล์) และสิทธิ์ OAuth ที่ได้รับอนุญาตที่เชื่อมโยงกับบัญชี Google ของคุณ</li>
                   <li><strong>บันทึกการทำงานและพื้นที่ทำงาน:</strong> คีย์ความสมบูรณ์ บันทึกการดำเนินงาน และคิวซ่อมแซมดัชนีที่จำเป็นเพื่อความปลอดภัยของธุรกรรม</li>
                 </ul>
@@ -258,7 +258,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({ onNavigate
                 <ul className="list-disc pl-5 space-y-2 text-sm text-[#4A435C]">
                   <li>ข้อมูลธุรกิจที่เป็นของคุณจะอยู่ใน Google Drive ของคุณเอง (`My Drive/Builly/`)</li>
                   <li>Cloudflare D1 ถูกใช้เป็นดัชนีปฏิบัติการและรีจิสทรีรันไทม์ที่สร้างใหม่ได้เท่านั้น</li>
-                  <li>Supabase Auth ใช้สำหรับการจัดการตัวตนและเซสชันเท่านั้น</li>
+                  <li>Builly จัดการตัวตนและเซสชันโดยตรงผ่าน Google OAuth 2.0 / OpenID Connect บน Cloudflare Workers</li>
                 </ul>
               </section>
 

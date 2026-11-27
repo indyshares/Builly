@@ -8,6 +8,7 @@ import {
   WorkspaceResourceRecord,
 } from '../services/workspaceHierarchyService';
 import { StoredCredentialRow, VerifiedSession, WorkerEnv } from '../types';
+import { createMemoryAuthStore, syncTestTokenHash } from '../services/buillyAuth';
 
 export interface MockMemberRow {
   member_id: string;
@@ -2421,15 +2422,44 @@ export function createInMemoryMockD1() {
 }
 
 export function createTestEnv(db: WorkerEnv['DB'], overrides: Partial<WorkerEnv> = {}): WorkerEnv {
+  const authStore = createMemoryAuthStore();
+  const now = Date.now();
+  const fixtures: Array<[string, string, string]> = [
+    ['alice_jwt', 'user_alice', 'alice@studio.com'],
+    ['bob_jwt', 'user_bob', 'bob@agency.com'],
+    ['token_alice', 'user_alice', 'alice@studio.com'],
+    ['valid', 'user_alice', 'alice@studio.com'],
+  ];
+  for (const [token, accountId, email] of fixtures) {
+    authStore.accounts.set(accountId, {
+      id: accountId,
+      status: 'active',
+      email,
+      displayName: '',
+      avatarUrl: '',
+      createdAt: now,
+      updatedAt: now,
+    });
+    authStore.sessions.set(syncTestTokenHash(token), {
+      tokenHash: syncTestTokenHash(token),
+      accountId,
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: now + 86_400_000,
+      absoluteExpiresAt: now + 2_592_000_000,
+      revokedAt: null,
+      userAgent: '',
+      ip: '',
+    });
+  }
   return {
     DB: db,
+    AUTH_STORE: authStore,
     GOOGLE_OAUTH_CLIENT_ID: 'test-client',
     GOOGLE_OAUTH_CLIENT_SECRET: 'test-secret',
     GOOGLE_OAUTH_REDIRECT_URI: 'https://worker.example/api/google/oauth/callback',
     GOOGLE_WORKSPACE_SCOPES: 'https://www.googleapis.com/auth/drive.file',
     TOKEN_ENCRYPTION_KEY: btoa('0123456789abcdef0123456789abcdef'),
-    SUPABASE_URL: 'https://supabase.example',
-    SUPABASE_ANON_KEY: 'anon',
     ALLOWED_FRONTEND_ORIGINS: 'http://localhost:3000',
     ...overrides,
   };
@@ -2595,20 +2625,6 @@ export function createStatefulGoogleAndAuthFetchMock(options?: {
         rule.sideEffectBeforeFail?.({ url, method, bodyText });
         return Response.json(rule.responseBody ?? { error: 'Injected fault' }, { status: rule.status });
       }
-    }
-
-    // --- Supabase Auth ---
-    if (url.endsWith('/auth/v1/user')) {
-      const auth = ((init?.headers as Record<string, string>)?.Authorization ||
-        (init?.headers as Record<string, string>)?.authorization ||
-        '') as string;
-      if (!auth || auth.includes('invalid')) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      if (auth.includes('bob')) {
-        return Response.json({ id: ownerB.ownerId, email: ownerB.email });
-      }
-      return Response.json({ id: ownerA.ownerId, email: ownerA.email });
     }
 
     // --- Google OAuth ---

@@ -78,22 +78,27 @@ async function parseJsonSafe<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+function workerFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.delete('Authorization');
+  return fetch(url, { ...init, headers, credentials: 'include' });
+}
+
 export const workspaceApiClient = {
   /**
    * Fetches non-sensitive Workspace connection status bound to the verified Builly owner session.
    * Never returns OAuth access tokens or refresh tokens.
    */
-  async getStatus(supabaseAccessToken: string): Promise<WorkspaceSafeStatus> {
-    if (!supabaseAccessToken) {
+  async getStatus(workerSessionToken: string): Promise<WorkspaceSafeStatus> {
+    if (!workerSessionToken) {
       throw new WorkerApiError('Missing Builly owner session token.', 401, 'UNAUTHORIZED');
     }
 
     let res: Response;
     try {
-      res = await fetch(buildWorkerUrl('/api/workspace/status'), {
+      res = await workerFetch(buildWorkerUrl('/api/workspace/status'), {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${supabaseAccessToken}`,
           Accept: 'application/json',
         },
       });
@@ -160,13 +165,12 @@ export const workspaceApiClient = {
    * Requests a single-use CSRF-protected Google Workspace OAuth authorization URL from the Worker.
    */
   async startGoogleWorkspaceOAuth(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     options?: { returnTo?: string; forceConsent?: boolean }
   ): Promise<{ authorizeUrl: string }> {
-    const res = await fetch(buildWorkerUrl('/api/google/oauth/start'), {
+    const res = await workerFetch(buildWorkerUrl('/api/google/oauth/start'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -202,7 +206,7 @@ export const workspaceApiClient = {
     error?: string;
   }> {
     try {
-      const res = await fetch(buildWorkerUrl('/api/google/oauth/diagnostics'), {
+      const res = await workerFetch(buildWorkerUrl('/api/google/oauth/diagnostics'), {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
@@ -218,11 +222,10 @@ export const workspaceApiClient = {
   /**
    * Disconnects the verified Builly owner's Google Workspace grant on the Worker (without signing out of Builly).
    */
-  async disconnect(supabaseAccessToken: string): Promise<void> {
-    const res = await fetch(buildWorkerUrl('/api/google/oauth/disconnect'), {
+  async disconnect(workerSessionToken: string): Promise<void> {
+    const res = await workerFetch(buildWorkerUrl('/api/google/oauth/disconnect'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         Accept: 'application/json',
       },
     });
@@ -237,15 +240,14 @@ export const workspaceApiClient = {
   },
 
   async verifyDriveFile(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     fileId: string
   ): Promise<{ file: { id: string; name: string; mimeType: string } }> {
-    const res = await fetch(
+    const res = await workerFetch(
       buildWorkerUrl(`/api/drive/file?fileId=${encodeURIComponent(fileId)}`),
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${supabaseAccessToken}`,
           Accept: 'application/json',
         },
       }
@@ -266,7 +268,7 @@ export const workspaceApiClient = {
   },
 
   async readSpreadsheetMeta(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     spreadsheetId: string
   ): Promise<{
     spreadsheet: {
@@ -276,12 +278,11 @@ export const workspaceApiClient = {
       sheets?: Array<{ properties?: { title?: string; sheetId?: number } }>;
     };
   }> {
-    const res = await fetch(
+    const res = await workerFetch(
       buildWorkerUrl(`/api/sheets/meta?spreadsheetId=${encodeURIComponent(spreadsheetId)}`),
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${supabaseAccessToken}`,
           Accept: 'application/json',
         },
       }
@@ -307,13 +308,12 @@ export const workspaceApiClient = {
   },
 
   async readSheetValues(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     params: { spreadsheetId: string; ranges: string[]; projectId?: string }
   ): Promise<{ valueRanges?: Array<{ range: string; values?: unknown[][] }> }> {
-    const res = await fetch(buildWorkerUrl('/api/sheets/values/read'), {
+    const res = await workerFetch(buildWorkerUrl('/api/sheets/values/read'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -336,7 +336,7 @@ export const workspaceApiClient = {
   },
 
   async writeSheetValues(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     params: {
       spreadsheetId: string;
       data: Array<{ range: string; values: unknown[][] }>;
@@ -344,10 +344,9 @@ export const workspaceApiClient = {
       projectId?: string;
     }
   ): Promise<{ ok: boolean; totalUpdatedRows?: number }> {
-    const res = await fetch(buildWorkerUrl('/api/sheets/values/write'), {
+    const res = await workerFetch(buildWorkerUrl('/api/sheets/values/write'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -370,7 +369,7 @@ export const workspaceApiClient = {
   },
 
   async appendSheetValues(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     params: {
       spreadsheetId: string;
       range: string;
@@ -379,10 +378,9 @@ export const workspaceApiClient = {
       projectId?: string;
     }
   ): Promise<{ ok: boolean }> {
-    const res = await fetch(buildWorkerUrl('/api/sheets/values/append'), {
+    const res = await workerFetch(buildWorkerUrl('/api/sheets/values/append'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -400,7 +398,7 @@ export const workspaceApiClient = {
   },
 
   async ensureProjectSpreadsheet(
-    supabaseAccessToken: string,
+    workerSessionToken: string,
     params: {
       projectId?: string;
       siteId?: string;
@@ -417,10 +415,9 @@ export const workspaceApiClient = {
     title: string;
     folderId: string;
   }> {
-    const res = await fetch(buildWorkerUrl('/api/sheets/spreadsheets/ensure'), {
+    const res = await workerFetch(buildWorkerUrl('/api/sheets/spreadsheets/ensure'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${supabaseAccessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },

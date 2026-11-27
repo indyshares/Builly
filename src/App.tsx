@@ -174,7 +174,7 @@ function findNodeWithParentInTree(
 
 export interface BuilderAppProps {
   buillyOwner?: BuillyOwnerIdentity | null;
-  supabaseAccessToken?: string | null;
+  workerSessionToken?: string | null;
   projectContext?: ActiveProjectContextMeta | null;
   initialPanel?: string | null;
   onNavigateConsole?: () => void;
@@ -186,7 +186,7 @@ export interface BuilderAppProps {
 
 export default function App({
   buillyOwner = null,
-  supabaseAccessToken = null,
+  workerSessionToken = null,
   projectContext = null,
   initialPanel = null,
   onNavigateConsole,
@@ -274,16 +274,16 @@ export default function App({
         prev.mediaAssets === repoAssets ? prev : { ...prev, mediaAssets: repoAssets }
       );
     });
-    if (activeProjectId && supabaseAccessToken) {
+    if (activeProjectId && workerSessionToken) {
       void cmsRepository
-        .loadFromProjectServer(activeProjectId, supabaseAccessToken)
+        .loadFromProjectServer(activeProjectId, workerSessionToken)
         .catch(() => undefined);
     }
     return () => {
       unsubscribe();
       unsubscribeAssets();
     };
-  }, [activeProjectId, supabaseAccessToken]);
+  }, [activeProjectId, workerSessionToken]);
 
   useEffect(() => {
     if (!initialPanel) return;
@@ -3122,11 +3122,11 @@ export default function App({
       setSelectedId(null);
       showToast(`Rolled back to ${targetVersion}`);
 
-      if (supabaseAccessToken && site.portfolioSlug) {
+      if (workerSessionToken && site.portfolioSlug) {
         void rollbackSiteOnSharedRuntime({
           siteSlug: site.portfolioSlug,
           targetVersion: targetRelease.version,
-          supabaseAccessToken,
+          workerSessionToken,
         }).then((res) => {
           if (!res.ok && res.error) {
             showToast(`Local rollback done (Worker sync warning: ${res.error})`);
@@ -3134,7 +3134,7 @@ export default function App({
         });
       }
     },
-    [site, pushState, syncVersionHistoryTab, showToast, supabaseAccessToken]
+    [site, pushState, syncVersionHistoryTab, showToast, workerSessionToken]
   );
 
   const handleUpdateCms = useCallback(
@@ -3359,12 +3359,12 @@ export default function App({
 
   const handleSyncCmsToWorkspace = useCallback(async () => {
     if (!site.cms) return;
-    if (activeProjectId && supabaseAccessToken) {
+    if (activeProjectId && workerSessionToken) {
       try {
         showToast('Syncing Project CMS to Drive & Sheets...');
         const synced = await cmsRepository.syncToProjectServer(
           activeProjectId,
-          supabaseAccessToken,
+          workerSessionToken,
           {
             syncSheets: true,
             projectName: projectContext?.projectName || site.name,
@@ -3403,7 +3403,7 @@ export default function App({
     site.name,
     site.id,
     activeProjectId,
-    supabaseAccessToken,
+    workerSessionToken,
     projectContext?.projectName,
     buillyOwner?.ownerId,
     requireGoogleToken,
@@ -3416,12 +3416,12 @@ export default function App({
 
   const handlePullCmsFromWorkspace = useCallback(async () => {
     if (!site.cms) return;
-    if (activeProjectId && supabaseAccessToken) {
+    if (activeProjectId && workerSessionToken) {
       try {
         showToast('Pulling Project CMS from Google Drive...');
         const pulled = await cmsRepository.loadFromProjectServer(
           activeProjectId,
-          supabaseAccessToken,
+          workerSessionToken,
           { forceAdoptRemote: true }
         );
         if (!pulled.found) {
@@ -3457,7 +3457,7 @@ export default function App({
   }, [
     site.cms,
     activeProjectId,
-    supabaseAccessToken,
+    workerSessionToken,
     requireGoogleToken,
     workspace.driveFolder?.id,
     workspace.spreadsheet.id,
@@ -4083,7 +4083,7 @@ export default function App({
         isOpen={isPublishModalOpen}
         site={site}
         workspace={workspace}
-        supabaseAccessToken={supabaseAccessToken}
+        workerSessionToken={workerSessionToken}
         orgId={projectContext?.orgId}
         projectId={projectContext?.projectId}
         onClose={() => setIsPublishModalOpen(false)}

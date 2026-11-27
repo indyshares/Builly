@@ -1,4 +1,7 @@
 #:schema ../node_modules/wrangler/config-schema.json
+# NOT the production deployment config. Production deploys from the ROOT wrangler.toml
+# (`npm run cf:deploy`) as Worker `builly-project`, which owns the D1/DO bindings and
+# runtime vars. Setting OAuth secrets on this Worker will not fix the production app.
 name = "builly-workspace-worker"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
@@ -15,10 +18,9 @@ tag = "v1"
 new_sqlite_classes = ["WorkspaceLockDO"]
 
 [vars]
-GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
+GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
 
 # Configure in Cloudflare Dashboard or per environment:
-# SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
 # ALLOWED_FRONTEND_ORIGINS = "https://builly.me,http://localhost:3000"
 # GOOGLE_OAUTH_REDIRECT_URI = "https://api.builly.me/api/google/oauth/callback"
 
@@ -26,7 +28,6 @@ GOOGLE_WORKSPACE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_CLIENT_SECRET
 # - TOKEN_ENCRYPTION_KEY (base64 32-byte key for AES-256-GCM)
-# - SUPABASE_ANON_KEY (optional; forwarded as apikey header when verifying Supabase JWT)
 
 # Bind Cloudflare D1 database for encrypted OAuth vault & Workspace registry pointers:
 # [[d1_databases]]

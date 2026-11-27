@@ -1,21 +1,25 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
 import { ENV_CONFIG } from '../../config/env';
-import { getSupabaseClient } from './supabaseClient';
 import {
   BuillyOwnerIdentity,
-  deriveOwnerFromSupabaseUser,
+  deriveOwnerFromAccount,
   signInWithGoogleIdentity,
   signOutBuillyIdentity,
 } from './authService';
+import { fetchBuillySession } from './buillySessionClient';
 
 export type AuthStatus = 'loading' | 'unconfigured' | 'signed_out' | 'authenticated' | 'error';
+
+interface LightweightSession {
+  user: { id: string; email?: string };
+}
 
 export interface AuthContextValue {
   status: AuthStatus;
   isConfigured: boolean;
   owner: BuillyOwnerIdentity | null;
-  session: Session | null;
+  session: LightweightSession | null;
+  /** Compatibility sentinel only — the real opaque token is HttpOnly in the Worker cookie. */
   accessToken: string | null;
   error: string | null;
   isBusy: boolean;
@@ -28,61 +32,49 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const isConfigured = ENV_CONFIG.isSupabaseConfigured;
-  const [status, setStatus] = useState<AuthStatus>(() =>
-    isConfigured ? 'loading' : 'unconfigured'
-  );
-  const [session, setSession] = useState<Session | null>(null);
+  const isConfigured = ENV_CONFIG.isAuthConfigured;
+  const [status, setStatus] = useState<AuthStatus>(() => (isConfigured ? 'loading' : 'unconfigured'));
+  const [session, setSession] = useState<LightweightSession | null>(null);
+  const [owner, setOwner] = useState<BuillyOwnerIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
-  const applySession = useCallback((nextSession: Session | null) => {
-    setSession(nextSession);
-    if (nextSession?.user) {
-      setStatus('authenticated');
-      setError(null);
-    } else {
-      setStatus(ENV_CONFIG.isSupabaseConfigured ? 'signed_out' : 'unconfigured');
-    }
-  }, []);
+  const applySession = useCallback(
+    (authenticated: boolean, sessionOwnerId: string | null, accountEmail?: string) => {
+      if (authenticated && sessionOwnerId) {
+        setSession({ user: { id: sessionOwnerId, email: accountEmail } });
+        setStatus('authenticated');
+        setError(null);
+      } else {
+        setSession(null);
+        setOwner(null);
+        setStatus(isConfigured ? 'signed_out' : 'unconfigured');
+      }
+    },
+    [isConfigured]
+  );
 
-  useEffect(() => {
-    const client = getSupabaseClient();
-    if (!client) {
+  const refreshSession = useCallback(async () => {
+    if (!isConfigured) {
       setStatus('unconfigured');
       return;
     }
+    setIsBusy(true);
+    try {
+      const state = await fetchBuillySession();
+      applySession(state.authenticated, state.ownerId, state.account?.email);
+      setOwner(state.account ? deriveOwnerFromAccount(state.account) : null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to restore session.');
+      setStatus('error');
+    } finally {
+      setIsBusy(false);
+    }
+  }, [applySession, isConfigured]);
 
-    let mounted = true;
-    client.auth
-      .getSession()
-      .then(({ data, error: sessionErr }) => {
-        if (!mounted) return;
-        if (sessionErr) {
-          setStatus('error');
-          setError(sessionErr.message);
-          return;
-        }
-        applySession(data.session);
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setStatus('error');
-        setError(err instanceof Error ? err.message : 'Unable to restore session.');
-      });
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((_event, nextSession) => {
-      if (!mounted) return;
-      applySession(nextSession);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [applySession]);
+  useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
 
   const signInWithGoogle = useCallback(async (returnTo = '/console') => {
     setError(null);
@@ -90,8 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await signInWithGoogleIdentity(returnTo);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to initiate Google Sign-In.';
+      const message = err instanceof Error ? err.message : 'Failed to initiate Google Sign-In.';
       setError(message);
       setIsBusy(false);
       throw err;
@@ -103,36 +94,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsBusy(true);
     try {
       await signOutBuillyIdentity();
-      setSession(null);
-      setStatus(ENV_CONFIG.isSupabaseConfigured ? 'signed_out' : 'unconfigured');
+      applySession(false, null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign out.');
     } finally {
       setIsBusy(false);
     }
-  }, []);
-
-  const refreshSession = useCallback(async () => {
-    const client = getSupabaseClient();
-    if (!client) {
-      setStatus('unconfigured');
-      return;
-    }
-    setIsBusy(true);
-    try {
-      const { data, error: refreshErr } = await client.auth.getSession();
-      if (refreshErr) {
-        setError(refreshErr.message);
-        setStatus('error');
-        return;
-      }
-      applySession(data.session);
-    } finally {
-      setIsBusy(false);
-    }
   }, [applySession]);
-
-  const owner = session?.user ? deriveOwnerFromSupabaseUser(session.user) : null;
 
   return (
     <AuthContext.Provider
@@ -141,7 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isConfigured,
         owner,
         session,
-        accessToken: session?.access_token ?? null,
+        accessToken: session ? 'builly-session-active' : null,
         error,
         isBusy,
         signInWithGoogle,

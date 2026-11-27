@@ -229,7 +229,7 @@ export const ProjectPublishingPage: React.FC<ProjectPublishingPageProps> = ({
         workspace,
         commitMessage,
         selectedPageIds,
-        supabaseAccessToken: accessToken,
+        workerSessionToken: accessToken,
         orgId: organization.org_id,
         projectId: project.project_id,
         expectedRevision: selectedSite.canonical_revision,

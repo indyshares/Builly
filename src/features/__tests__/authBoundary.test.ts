@@ -1,135 +1,57 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseClient } from '../identity/supabaseClient';
-import {
-  formatAuthCallbackError,
-  resolveAuthCallbackWithClient,
-} from '../identity/authService';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ENV_CONFIG } from '../../config/env';
+import {
+  consumePendingReturnTo,
+  formatAuthCallbackError,
+  savePendingReturnTo,
+  scrubAuthCallbackUrlParams,
+} from '../identity/authService';
 
-function createFakeSession(userId = 'owner-123'): Session {
-  return {
-    access_token: 'fake-access-token',
-    refresh_token: 'fake-refresh-token',
-    expires_in: 3600,
-    token_type: 'bearer',
-    user: {
-      id: userId,
-      app_metadata: { provider: 'google' },
-      user_metadata: { full_name: 'Builly Owner' },
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-    },
-  } as Session;
-}
+describe('Builly auth boundary invariants', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-describe('Auth & Workspace boundary invariants', () => {
-  it('never exposes secrets in public ENV_CONFIG and returns null Supabase client when unconfigured', () => {
-    const keys = Object.keys(ENV_CONFIG);
-    for (const k of keys) {
-      expect(k.toLowerCase()).not.toContain('secret');
-      expect(k.toLowerCase()).not.toContain('service_role');
-      expect(k.toLowerCase()).not.toContain('encryption');
-    }
-
-    if (!ENV_CONFIG.isSupabaseConfigured) {
-      expect(getSupabaseClient()).toBeNull();
+  it('exposes no secret-like public configuration', () => {
+    for (const key of Object.keys(ENV_CONFIG)) {
+      expect(key.toLowerCase()).not.toContain('secret');
+      expect(key.toLowerCase()).not.toContain('service_role');
+      expect(key.toLowerCase()).not.toContain('encryption');
     }
   });
 
-  it('does NOT call exchangeCodeForSession when getSession() already completed auto-PKCE exchange', async () => {
-    const existingSession = createFakeSession();
-    const exchangeSpy = vi.fn();
-    const mockClient = {
-      auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: existingSession },
-          error: null,
-        }),
-        exchangeCodeForSession: exchangeSpy,
-      },
-    } as unknown as Pick<SupabaseClient, 'auth'>;
-
-    const result = await resolveAuthCallbackWithClient(mockClient, '?code=pkce-code-1');
-    expect(result.error).toBeUndefined();
-    expect(result.session?.user.id).toBe('owner-123');
-    expect(exchangeSpy).not.toHaveBeenCalled();
+  it('maps Worker callback error codes to safe messages', () => {
+    expect(formatAuthCallbackError('access_denied')).toBe('Google sign-in was cancelled.');
+    expect(formatAuthCallbackError('invalid_state')).toContain('Invalid Google sign-in response');
+    expect(formatAuthCallbackError('token_exchange_failed')).toContain('Could not complete Google sign-in');
+    expect(formatAuthCallbackError('oauth_denied')).toBe('oauth_denied');
   });
 
-  it('deduplicates concurrent exchangeCodeForSession calls for the same authorization code', async () => {
-    const exchangedSession = createFakeSession('owner-concurrent');
-    const exchangeSpy = vi.fn().mockImplementation(
-      () =>
-        new Promise((resolve) =>
-          setTimeout(
-            () => resolve({ data: { session: exchangedSession, user: exchangedSession.user }, error: null }),
-            15
-          )
-        )
-    );
-    const mockClient = {
-      auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: null },
-          error: null,
-        }),
-        exchangeCodeForSession: exchangeSpy,
-      },
-    } as unknown as Pick<SupabaseClient, 'auth'>;
-
-    const [r1, r2] = await Promise.all([
-      resolveAuthCallbackWithClient(mockClient, '?code=shared-auth-code'),
-      resolveAuthCallbackWithClient(mockClient, '?code=shared-auth-code'),
-    ]);
-
-    expect(exchangeSpy).toHaveBeenCalledTimes(1);
-    expect(exchangeSpy).toHaveBeenCalledWith('shared-auth-code');
-    expect(r1.session?.user.id).toBe('owner-concurrent');
-    expect(r2.session?.user.id).toBe('owner-concurrent');
+  it('rejects unsafe return paths and consumes a safe pending return path', () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    };
+    vi.stubGlobal('window', {
+      localStorage: storage,
+      sessionStorage: storage,
+      location: { href: 'https://builly.indyshares.com/login', search: '' },
+      history: { replaceState: vi.fn() },
+    });
+    savePendingReturnTo('//evil.example');
+    expect(consumePendingReturnTo()).toBe('/console');
+    savePendingReturnTo('/console/projects');
+    expect(consumePendingReturnTo()).toBe('/console/projects');
   });
 
-  it('short-circuits with formatted recovery guidance when getSession() fails PKCE initialization', async () => {
-    const exchangeSpy = vi.fn();
-    const mockClient = {
-      auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: null },
-          error: { message: 'PKCE code verifier not found in storage.' },
-        }),
-        exchangeCodeForSession: exchangeSpy,
-      },
-    } as unknown as Pick<SupabaseClient, 'auth'>;
-
-    const result = await resolveAuthCallbackWithClient(mockClient, '?code=stale-code');
-    expect(result.session).toBeNull();
-    expect(result.error).toContain('browser storage from the login start was unavailable');
-    expect(exchangeSpy).not.toHaveBeenCalled();
-  });
-
-  it('handles OAuth error query params and PKCE verifier error formatting cleanly', () => {
-    expect(formatAuthCallbackError('PKCE code verifier not found in storage')).toContain(
-      'embedded preview frame'
-    );
-    expect(formatAuthCallbackError('access_denied')).toBe('access_denied');
-  });
-
-  it('returns formatted error directly when OAuth callback contains error query params', async () => {
-    const getSessionSpy = vi.fn();
-    const exchangeSpy = vi.fn();
-    const mockClient = {
-      auth: {
-        getSession: getSessionSpy,
-        exchangeCodeForSession: exchangeSpy,
-      },
-    } as unknown as Pick<SupabaseClient, 'auth'>;
-
-    const res = await resolveAuthCallbackWithClient(
-      mockClient,
-      '?error=access_denied&error_description=User+cancelled+Google+sign-in'
-    );
-    expect(res.session).toBeNull();
-    expect(res.error).toBe('User cancelled Google sign-in');
-    expect(getSessionSpy).not.toHaveBeenCalled();
-    expect(exchangeSpy).not.toHaveBeenCalled();
+  it('scrubs authorization codes and OAuth error params from the URL', () => {
+    vi.stubGlobal('window', {
+      location: { href: 'https://builly.indyshares.com/auth/callback?code=abc&state=xyz&auth_error=invalid_state' },
+      history: { replaceState: vi.fn() },
+    });
+    scrubAuthCallbackUrlParams();
+    expect(window.history.replaceState).toHaveBeenCalledWith({}, '', '/auth/callback');
   });
 });

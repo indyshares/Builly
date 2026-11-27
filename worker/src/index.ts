@@ -22,6 +22,13 @@ import {
   handlePublicResolveSite,
 } from './routes/publicRuntime';
 import { handleConsoleApiRequest } from './routes/consoleApi';
+import {
+  handleAuthGoogleCallback,
+  handleAuthGoogleReconnect,
+  handleAuthGoogleStart,
+  handleAuthLogout,
+  handleAuthSession,
+} from './routes/auth';
 import { BuillyTransactionError } from './services/transactionErrors';
 import { WorkerEnv } from './types';
 
@@ -59,7 +66,7 @@ function withCors(request: Request, env: WorkerEnv, response: Response): Respons
   }
 
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, If-Match');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Cookie, Idempotency-Key, If-Match');
   headers.set('Access-Control-Max-Age', '86400');
   headers.set('Vary', 'Origin');
 
@@ -83,6 +90,16 @@ export default {
     try {
       if (pathname === '/api/health' && request.method === 'GET') {
         response = Response.json({ ok: true, service: 'builly-workspace-worker', runtimeVersion: '1.0.0' });
+      } else if (pathname === '/api/auth/google/start' && request.method === 'GET') {
+        return withCors(request, env, await handleAuthGoogleStart(request, env));
+      } else if (pathname === '/api/auth/google/callback' && request.method === 'GET') {
+        return withCors(request, env, await handleAuthGoogleCallback(request, env));
+      } else if (pathname === '/api/auth/session' && request.method === 'GET') {
+        response = await handleAuthSession(request, env);
+      } else if (pathname === '/api/auth/logout' && request.method === 'POST') {
+        response = await handleAuthLogout(request, env);
+      } else if (pathname === '/api/auth/google/reconnect' && request.method === 'POST') {
+        response = await handleAuthGoogleReconnect(request, env);
       } else if (pathname.startsWith('/api/console/')) {
         response = await handleConsoleApiRequest(request, env, pathname);
       } else if (pathname === '/api/workspace/status' && request.method === 'GET') {

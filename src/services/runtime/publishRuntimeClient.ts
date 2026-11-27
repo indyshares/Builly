@@ -35,12 +35,12 @@ export async function publishSiteToSharedRuntime(params: {
   workspace: GoogleWorkspaceState;
   commitMessage: string;
   selectedPageIds: string[];
-  supabaseAccessToken?: string | null;
+  workerSessionToken?: string | null;
   orgId?: string;
   projectId?: string;
   expectedRevision?: number;
 }): Promise<SharedRuntimePublishOutcome> {
-  const { site, workspace, commitMessage, selectedPageIds, supabaseAccessToken, orgId, projectId, expectedRevision } =
+  const { site, workspace, commitMessage, selectedPageIds, workerSessionToken, orgId, projectId, expectedRevision } =
     params;
 
   const baseRelease = compilerService.compileRelease(
@@ -63,7 +63,7 @@ export async function publishSiteToSharedRuntime(params: {
   const workerBase = resolveWorkerBaseUrl();
 
   // Path 1: Worker + authenticated Builly session -> real Drive upload + D1 registry + cache purge
-  if (supabaseAccessToken && (workerBase || ENV_CONFIG.isSupabaseConfigured)) {
+  if (workerSessionToken && (workerBase || ENV_CONFIG.isAuthConfigured)) {
     const operationId = createOperationKey('pub');
     try {
       const formDestinations = (site.cms?.forms || [])
@@ -98,8 +98,8 @@ export async function publishSiteToSharedRuntime(params: {
         buildConsoleApiUrl(`/api/owner/sites/${encodeURIComponent(site.portfolioSlug)}/publish`),
         {
           method: 'POST',
+          credentials: 'include' as const,
           headers: {
-            Authorization: `Bearer ${supabaseAccessToken}`,
             'Content-Type': 'application/json',
             'Idempotency-Key': operationId,
           },
@@ -230,11 +230,11 @@ export async function publishSiteToSharedRuntime(params: {
 export async function rollbackSiteOnSharedRuntime(params: {
   siteSlug: string;
   targetVersion: string;
-  supabaseAccessToken?: string | null;
+  workerSessionToken?: string | null;
 }): Promise<{ ok: boolean; remoteSynced: boolean; operationId?: string; error?: string; code?: string }> {
-  const { siteSlug, targetVersion, supabaseAccessToken } = params;
+  const { siteSlug, targetVersion, workerSessionToken } = params;
   const workerBase = resolveWorkerBaseUrl();
-  if (!supabaseAccessToken || (!workerBase && !ENV_CONFIG.isSupabaseConfigured)) {
+  if (!workerSessionToken || (!workerBase && !ENV_CONFIG.isAuthConfigured)) {
     return { ok: true, remoteSynced: false };
   }
   const operationId = createOperationKey('rb');
@@ -243,8 +243,8 @@ export async function rollbackSiteOnSharedRuntime(params: {
       buildConsoleApiUrl(`/api/owner/sites/${encodeURIComponent(siteSlug)}/rollback`),
       {
         method: 'POST',
+        credentials: 'include' as const,
         headers: {
-          Authorization: `Bearer ${supabaseAccessToken}`,
           'Content-Type': 'application/json',
           'Idempotency-Key': operationId,
         },

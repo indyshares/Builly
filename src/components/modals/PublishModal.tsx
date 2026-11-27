@@ -27,7 +27,7 @@ interface PublishModalProps {
   isOpen: boolean;
   site: SiteDocument;
   workspace: GoogleWorkspaceState;
-  supabaseAccessToken?: string | null;
+  workerSessionToken?: string | null;
   orgId?: string;
   projectId?: string;
   readOnly?: boolean;
@@ -42,7 +42,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
   isOpen,
   site,
   workspace,
-  supabaseAccessToken,
+  workerSessionToken,
   orgId,
   projectId,
   readOnly = false,
@@ -114,7 +114,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
         workspace,
         commitMessage,
         selectedPageIds,
-        supabaseAccessToken,
+        workerSessionToken,
         orgId,
         projectId,
         expectedRevision,

@@ -154,7 +154,7 @@ const RouterContent: React.FC = () => {
     );
   }
 
-  // When Supabase Auth IS configured, strictly require authenticated Builly owner session
+  // When Builly auth is configured, strictly require an authenticated owner session
   if (isConfigured && status !== 'authenticated') {
     return (
       <LoginPage
@@ -166,7 +166,7 @@ const RouterContent: React.FC = () => {
     );
   }
 
-  // When Supabase Auth is NOT configured, show honest setup gate unless user explicitly chooses local draft preview
+  // When Builly auth is not configured, show honest setup gate unless user explicitly chooses local draft preview
   if (!isConfigured && !allowUnconfiguredLocalPreview) {
     return (
       <LoginPage
@@ -221,7 +221,7 @@ const RouterContent: React.FC = () => {
       <div className="flex-1 min-h-0">
         <App
           buillyOwner={owner}
-          supabaseAccessToken={accessToken}
+          workerSessionToken={accessToken}
           projectContext={projectContext}
           initialPanel={initialPanel}
           onNavigateConsole={() =>

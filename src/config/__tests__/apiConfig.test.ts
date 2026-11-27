@@ -81,6 +81,16 @@ describe('Centralized Console API origin resolution', () => {
     expect(endpoint).not.toContain('run.app/builly-project.mycloudsfireworks.workers.dev');
   });
 
+  it('builds the Google OAuth start URL against the deployed Worker origin', () => {
+    const endpoint = buildConsoleApiUrl(
+      '/api/google/oauth/start',
+      'https://builly-project.mycloudsfireworks.workers.dev'
+    );
+    expect(endpoint).toBe(
+      'https://builly-project.mycloudsfireworks.workers.dev/api/google/oauth/start'
+    );
+  });
+
   it('workspaceHierarchyClient.getBootstrap calls the absolute Worker HTTPS URL and diagnoses HTTP status & network errors', async () => {
     const fetchSpy = vi.fn().mockResolvedValue(
       new Response(

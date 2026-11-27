@@ -1,3 +1,5 @@
+> **RETIRED — historical document.** Supabase is no longer used. See `docs/AUTH_SETUP.md` and `docs/superpowers/specs/2026-11-27-builly-direct-google-oauth-design.md`.
+
 # Builly — Authentication, Workspace OAuth & Phased Migration Setup
 
 This guide documents how Builly separates **owner identity** (Supabase Auth) from **user-owned content storage** (Google Drive & Google Sheets via Cloudflare Workers).
@@ -27,6 +29,8 @@ VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_PUBLIC_ANON_KEY"
 VITE_WORKER_API_URL="https://api.yourdomain.com"
 VITE_GOOGLE_OAUTH_CLIENT_ID="YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com"
 ```
+
+> `.env` / `.env.local` are **build-time only**. Vite exposes only `VITE_*` keys to the browser, and Wrangler reads them only for `wrangler dev`. Adding `GOOGLE_OAUTH_CLIENT_ID` or `GOOGLE_OAUTH_CLIENT_SECRET` to `.env` does **not** configure the deployed Worker. Production secrets must be set on Worker **`builly-project`** (the root `wrangler.toml` target), not on `builly-workspace-worker`.
 
 ### Supabase Auth Configuration
 1. In the Supabase Dashboard -> **Authentication -> Providers -> Google**, enable Google Sign-In (standard identity scopes only; do **not** add Drive/Sheets scopes here).

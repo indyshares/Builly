@@ -1,277 +1,150 @@
-import type { Session, SupabaseClient, User } from '@supabase/supabase-js';
-import { ENV_CONFIG } from '../../config/env';
-import { clearStalePkceVerifiers, getSupabaseClient } from './supabaseClient';
-import { sanitizeReturnTo } from '../../utils/routes';
+import {
+  BuillyAccount,
+  fetchBuillySession,
+  signOutBuilly,
+  startGoogleLogin,
+} from './buillySessionClient';
 
 export interface BuillyOwnerIdentity {
   ownerId: string;
   email: string;
   displayName: string;
   avatarUrl: string;
-  provider: string;
-  lastSignInAt?: string;
+  provider: 'google';
 }
 
-const RETURN_TO_STORAGE_KEY = 'builly_auth_return_to_v1';
+const RETURN_TO_KEY = 'builly_auth_return_to_v1';
 const RETURN_TO_TTL_MS = 15 * 60 * 1000;
 
-// Module-level lock preventing duplicate PKCE code exchange (e.g. React StrictMode double effects)
-const inFlightCodeExchanges = new Map<
-  string,
-  Promise<{ session: Session | null; error?: string }>
->();
+type StoredReturnTo = { value: string; expiresAt: number };
 
 export function isEmbeddedIframe(): boolean {
   if (typeof window === 'undefined') return false;
-  try {
-    return window.self !== window.top;
-  } catch {
-    return true;
-  }
+  return window.self !== window.top;
 }
 
-export function deriveOwnerFromSupabaseUser(user: User): BuillyOwnerIdentity {
-  const meta = (user.user_metadata || {}) as Record<string, unknown>;
-  const fullName =
-    (typeof meta.full_name === 'string' && meta.full_name) ||
-    (typeof meta.name === 'string' && meta.name) ||
-    user.email?.split('@')[0] ||
-    'Builly Owner';
-  const avatarUrl =
-    (typeof meta.avatar_url === 'string' && meta.avatar_url) ||
-    (typeof meta.picture === 'string' && meta.picture) ||
-    '';
-  const provider =
-    typeof user.app_metadata?.provider === 'string' ? user.app_metadata.provider : 'google';
-
+export function deriveOwnerFromAccount(account: BuillyAccount): BuillyOwnerIdentity {
   return {
-    ownerId: user.id,
-    email: user.email || '',
-    displayName: fullName,
-    avatarUrl,
-    provider,
-    lastSignInAt: user.last_sign_in_at,
+    ownerId: account.id,
+    email: account.email,
+    displayName: account.displayName,
+    avatarUrl: account.avatarUrl,
+    provider: 'google',
   };
 }
 
-export function savePendingReturnTo(path: string): void {
+export function savePendingReturnTo(returnTo: string): void {
   if (typeof window === 'undefined') return;
-  const safePath = sanitizeReturnTo(path, '/console');
-  const payload = JSON.stringify({
-    path: safePath,
+  const payload: StoredReturnTo = {
+    value: returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/console',
     expiresAt: Date.now() + RETURN_TO_TTL_MS,
-  });
+  };
   try {
-    window.localStorage.setItem(RETURN_TO_STORAGE_KEY, payload);
+    window.localStorage.setItem(RETURN_TO_KEY, JSON.stringify(payload));
   } catch {
     try {
-      window.sessionStorage.setItem(RETURN_TO_STORAGE_KEY, payload);
+      window.sessionStorage.setItem(RETURN_TO_KEY, JSON.stringify(payload));
     } catch {
-      // Ignore storage restriction errors
+      // Ignore storage failures; the default return path is used.
     }
   }
 }
 
-export function peekPendingReturnTo(): string {
+export function peekPendingReturnTo(): string | null {
   if (typeof window === 'undefined') return '/console';
-  try {
-    const raw =
-      window.localStorage.getItem(RETURN_TO_STORAGE_KEY) ??
-      window.sessionStorage.getItem(RETURN_TO_STORAGE_KEY);
-    if (!raw) return '/console';
-    if (raw.startsWith('/')) {
-      return sanitizeReturnTo(raw, '/console');
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      const raw = storage.getItem(RETURN_TO_KEY);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as StoredReturnTo;
+      if (parsed.expiresAt > Date.now() && parsed.value.startsWith('/')) return parsed.value;
+      storage.removeItem(RETURN_TO_KEY);
+    } catch {
+      // Ignore malformed entries.
     }
-    const parsed = JSON.parse(raw) as { path?: string; expiresAt?: number };
-    if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
-      return '/console';
-    }
-    return sanitizeReturnTo(parsed.path, '/console');
-  } catch {
-    return '/console';
   }
+  return '/console';
 }
 
 export function consumePendingReturnTo(): string {
-  const path = peekPendingReturnTo();
+  const value = peekPendingReturnTo();
   if (typeof window !== 'undefined') {
     try {
-      window.localStorage.removeItem(RETURN_TO_STORAGE_KEY);
+      window.localStorage.removeItem(RETURN_TO_KEY);
+      window.sessionStorage.removeItem(RETURN_TO_KEY);
     } catch {
-      // Ignore
-    }
-    try {
-      window.sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
-    } catch {
-      // Ignore
+      // Ignore storage failures.
     }
   }
-  return path;
+  return value || '/console';
 }
 
-function scrubAuthCallbackUrlParams(): void {
+export function scrubAuthCallbackUrlParams(): void {
   if (typeof window === 'undefined') return;
-  try {
-    const url = new URL(window.location.href);
-    const paramsToDelete = ['code', 'state', 'error', 'error_code', 'error_description'];
-    let changed = false;
-    for (const p of paramsToDelete) {
-      if (url.searchParams.has(p)) {
-        url.searchParams.delete(p);
-        changed = true;
-      }
+  const url = new URL(window.location.href);
+  let changed = false;
+  for (const key of ['code', 'state', 'error', 'error_description', 'auth_error', 'workspace_error']) {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
     }
-    if (changed) {
-      const nextSearch = url.searchParams.toString();
-      const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ''}${url.hash}`;
-      window.history.replaceState(null, '', nextUrl);
-    }
-  } catch {
-    // Ignore history replaceState errors
   }
+  if (changed) window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-export function formatAuthCallbackError(rawError: string): string {
-  const lower = rawError.toLowerCase();
-  if (lower.includes('code verifier') || lower.includes('pkce')) {
-    return (
-      'PKCE verification could not be completed because the browser storage from the login start was unavailable on return ' +
-      '(this commonly happens when signing in from an embedded preview frame, switching browsers/tabs, or clearing site storage). ' +
-      'Please retry Google Sign-In directly in this browser tab.'
-    );
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: 'Google sign-in was cancelled.',
+  invalid_state: 'Invalid Google sign-in response. Please try again.',
+  missing_code: 'Google did not return an authorization code. Please try again.',
+  token_exchange_failed: 'Could not complete Google sign-in. Please try again.',
+  invalid_identity: 'Google identity verification failed. Please try again.',
+  session_expired: 'Your session expired. Please sign in again.',
+};
+
+export function formatAuthCallbackError(raw: string): string {
+  if (AUTH_ERROR_MESSAGES[raw]) return AUTH_ERROR_MESSAGES[raw];
+  if (raw.includes('verifier') || raw.toLowerCase().includes('storage')) {
+    return 'The sign-in session could not be restored. Please start again from Builly.';
   }
-  return rawError;
+  return raw;
 }
 
-/**
- * Initiates Google Sign-In strictly through Supabase Auth for Builly owner identity.
- * Intentionally requests NO Google Drive or Google Sheets scopes here.
- */
+/** Starts the direct Worker → Google Authorization Code flow. */
 export async function signInWithGoogleIdentity(returnTo = '/console'): Promise<void> {
-  const client = getSupabaseClient();
-  if (!client) {
-    throw new Error(
-      'Supabase Authentication is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Google Sign-In.'
-    );
-  }
-
-  // Ensure exact origin match between the browser tab holding the PKCE verifier and redirectTo
-  const callbackOrigin =
-    typeof window !== 'undefined' ? window.location.origin : ENV_CONFIG.appUrl;
-
-  clearStalePkceVerifiers();
   savePendingReturnTo(returnTo);
-
-  const redirectTo = `${callbackOrigin.replace(/\/+$/, '')}/auth/callback`;
-
-  const { error } = await client.auth.signInWithOAuth({
-    provider: 'google',
-    options: {
-      redirectTo,
-      queryParams: {
-        prompt: 'select_account',
-      },
-    },
-  });
-
-  if (error) {
-    throw new Error(error.message || 'Could not start Google Sign-In via Supabase Auth.');
-  }
+  startGoogleLogin(returnTo);
 }
 
 /**
- * Pure, testable PKCE callback handler:
- * 1. Always awaits client.auth.getSession() FIRST so Supabase's built-in detectSessionInUrl
- *    initializer completes without racing a duplicate exchangeCodeForSession call.
- * 2. Deduplicates explicit code exchange per authorization code so React StrictMode
- *    double-invocations never consume the verifier twice.
+ * Reads callback status set by the Worker and loads the Builly session.
+ * The Worker handles the code exchange, ID token verification and cookie issuance.
  */
-export async function resolveAuthCallbackWithClient(
-  client: Pick<SupabaseClient, 'auth'>,
-  search: string
-): Promise<{ session: Session | null; error?: string }> {
-  const params = new URLSearchParams(search);
-  const oauthError = params.get('error_description') || params.get('error');
+export async function completeAuthCallback(): Promise<{
+  session: { user: { id: string; email?: string } } | null;
+  error?: string;
+}> {
+  const params = new URLSearchParams(
+    typeof window !== 'undefined' ? window.location.search : ''
+  );
+  const oauthError = params.get('auth_error') || params.get('error_description') || params.get('error');
   if (oauthError) {
     scrubAuthCallbackUrlParams();
     return { session: null, error: formatAuthCallbackError(oauthError) };
   }
 
-  // First check session — in @supabase/supabase-js, getSession() awaits _initialize(),
-  // which automatically exchanges ?code=... once when detectSessionInUrl: true.
-  const { data: initialData, error: initialErr } = await client.auth.getSession();
-  if (initialData.session) {
+  try {
+    const state = await fetchBuillySession();
     scrubAuthCallbackUrlParams();
-    return { session: initialData.session };
-  }
-  if (initialErr) {
-    scrubAuthCallbackUrlParams();
-    return { session: null, error: formatAuthCallbackError(initialErr.message) };
-  }
-
-  const code = params.get('code');
-  if (!code) {
-    return { session: null };
-  }
-
-  const existingPromise = inFlightCodeExchanges.get(code);
-  if (existingPromise) {
-    return existingPromise;
-  }
-
-  const exchangePromise = (async () => {
-    try {
-      // Double check getSession() right before exchange in case another listener just completed
-      const { data: recheckData } = await client.auth.getSession();
-      if (recheckData.session) {
-        scrubAuthCallbackUrlParams();
-        return { session: recheckData.session };
-      }
-
-      const { data, error } = await client.auth.exchangeCodeForSession(code);
-      if (error) {
-        return { session: null, error: formatAuthCallbackError(error.message) };
-      }
-      scrubAuthCallbackUrlParams();
-      return { session: data.session };
-    } finally {
-      inFlightCodeExchanges.delete(code);
+    if (!state.authenticated || !state.ownerId) {
+      return { session: null, error: 'session_expired' };
     }
-  })();
-
-  inFlightCodeExchanges.set(code, exchangePromise);
-  return exchangePromise;
-}
-
-/**
- * Completes or restores an OAuth callback session on /auth/callback.
- */
-export async function completeAuthCallback(): Promise<{
-  session: Session | null;
-  error?: string;
-}> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return {
-      session: null,
-      error:
-        'Supabase Authentication is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
-    };
+    return { session: { user: { id: state.ownerId, email: state.account?.email } } };
+  } catch {
+    return { session: null, error: 'Unable to load Builly session.' };
   }
-
-  const search = typeof window !== 'undefined' ? window.location.search : '';
-  return resolveAuthCallbackWithClient(client, search);
 }
 
-/**
- * Ends ONLY the Builly Supabase identity session.
- * Intentionally does NOT revoke any separate Google Workspace OAuth grant.
- */
+/** Ends only the Builly session; the Google Workspace grant is managed separately. */
 export async function signOutBuillyIdentity(): Promise<void> {
-  const client = getSupabaseClient();
-  if (!client) return;
-  const { error } = await client.auth.signOut();
-  if (error) {
-    throw new Error(error.message || 'Failed to sign out of Builly session.');
-  }
+  await signOutBuilly();
 }

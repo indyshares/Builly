@@ -173,7 +173,7 @@ export const ProjectVersionsPage: React.FC<ProjectVersionsPageProps> = ({
         const res = await rollbackSiteOnSharedRuntime({
           siteSlug: confirmRollback.siteSlug,
           targetVersion: confirmRollback.version,
-          supabaseAccessToken: accessToken,
+          workerSessionToken: accessToken,
         });
         if (!res.ok) {
           setErrorBanner(res.error || 'Server rollback failed.');

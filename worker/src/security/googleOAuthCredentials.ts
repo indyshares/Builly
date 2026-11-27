@@ -1,15 +1,31 @@
+import { GOOGLE_WORKSPACE_SCOPES_STRING } from '../config/googleScopes';
 import { WorkerEnv } from '../types';
+
+export type GoogleOAuthConfigCode =
+  | 'MISSING_GOOGLE_CLIENT_ID'
+  | 'INVALID_GOOGLE_CLIENT_ID'
+  | 'MISSING_GOOGLE_CLIENT_SECRET'
+  | 'INVALID_GOOGLE_OAUTH_REDIRECT_URI'
+  | 'MISSING_GOOGLE_WORKSPACE_SCOPES';
+
+export interface GoogleOAuthConfigValidation {
+  ok: boolean;
+  codes: GoogleOAuthConfigCode[];
+  message: string;
+}
 
 export interface SafeDiagnostics {
   clientIdConfigured: boolean;
-  clientIdSource: 'GOOGLE_OAUTH_CLIENT_ID' | 'VITE_GOOGLE_OAUTH_CLIENT_ID' | 'NONE';
+  clientIdSource: 'GOOGLE_OAUTH_CLIENT_ID' | 'NONE';
   clientIdFingerprint: string;
   clientIdLength: number;
+  clientIdFormatValid: boolean;
   hasQuotes: boolean;
   hasWhitespace: boolean;
   hasStandardSuffix: boolean;
   rawCandidateFound: boolean;
   redirectUriConfigured: boolean;
+  redirectUriValid: boolean;
   redirectUri: string;
   clientSecretConfigured: boolean;
   scopesConfigured: boolean;
@@ -21,7 +37,7 @@ export interface ResolvedGoogleCredentials {
   clientSecret: string;
   redirectUri: string;
   scopes: string;
-  source: 'GOOGLE_OAUTH_CLIENT_ID' | 'VITE_GOOGLE_OAUTH_CLIENT_ID' | 'NONE';
+  source: 'GOOGLE_OAUTH_CLIENT_ID' | 'NONE';
   diagnostics: SafeDiagnostics;
 }
 
@@ -41,6 +57,23 @@ function isValidCandidate(val: unknown): val is string {
   if (typeof val !== 'string') return false;
   const cleaned = cleanString(val);
   return cleaned.length > 0 && cleaned !== 'undefined' && cleaned !== 'null';
+}
+
+function isValidRedirectUri(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const isLocalHttp =
+      parsed.protocol === 'http:' &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase());
+    return (
+      (parsed.protocol === 'https:' || isLocalHttp) &&
+      ['/api/auth/google/callback', '/api/google/oauth/callback'].includes(parsed.pathname) &&
+      !parsed.username &&
+      !parsed.password
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -70,31 +103,20 @@ export function createSafeClientFingerprint(raw: string): string {
 }
 
 /**
- * Centrally resolves Google OAuth credentials and parameters for the Worker runtime.
- * - Prioritizes GOOGLE_OAUTH_CLIENT_ID with fallback to VITE_GOOGLE_OAUTH_CLIENT_ID.
+ * Resolves Google OAuth credentials exclusively from Worker runtime bindings.
+ * VITE_* values are frontend build-time variables and are deliberately not accepted here.
  * - Strips accidental surrounding quotes and whitespace from dashboard inputs.
  * - Normalizes missing .apps.googleusercontent.com suffixes when a valid prefix was provided.
- * - Guarantees non-empty redirectUri with fallback to request origin.
+ * - Guarantees non-empty redirectUri with fallback to the request origin.
  * - Generates privacy-preserving safe diagnostics for verification.
  */
 export function resolveGoogleOAuthCredentials(
   env: WorkerEnv,
   requestUrl?: string
 ): ResolvedGoogleCredentials {
-  const envMap = env as unknown as Record<string, string | undefined>;
   const rawPrimary = env.GOOGLE_OAUTH_CLIENT_ID;
-  const rawVite = envMap.VITE_GOOGLE_OAUTH_CLIENT_ID;
-
-  let chosenRaw = '';
-  let source: 'GOOGLE_OAUTH_CLIENT_ID' | 'VITE_GOOGLE_OAUTH_CLIENT_ID' | 'NONE' = 'NONE';
-
-  if (isValidCandidate(rawPrimary)) {
-    chosenRaw = rawPrimary;
-    source = 'GOOGLE_OAUTH_CLIENT_ID';
-  } else if (isValidCandidate(rawVite)) {
-    chosenRaw = rawVite;
-    source = 'VITE_GOOGLE_OAUTH_CLIENT_ID';
-  }
+  const chosenRaw = isValidCandidate(rawPrimary) ? rawPrimary : '';
+  const source: 'GOOGLE_OAUTH_CLIENT_ID' | 'NONE' = chosenRaw ? 'GOOGLE_OAUTH_CLIENT_ID' : 'NONE';
 
   const rawTrimmed = typeof chosenRaw === 'string' ? chosenRaw.trim() : '';
   const hasQuotes =
@@ -112,6 +134,7 @@ export function resolveGoogleOAuthCredentials(
     cleanedClientId = `${cleanedClientId}.apps.googleusercontent.com`;
     hasStandardSuffix = true;
   }
+  const clientIdFormatValid = Boolean(cleanedClientId && hasStandardSuffix);
 
   // Redirect URI resolution
   let cleanedRedirectUri = cleanString(env.GOOGLE_OAUTH_REDIRECT_URI);
@@ -127,20 +150,18 @@ export function resolveGoogleOAuthCredentials(
     cleanedRedirectUri = 'https://builly.indyshares.com/api/google/oauth/callback';
   }
 
-  // Client Secret resolution
+  // Client Secret resolution (Worker Secret only)
   const cleanedClientSecret = cleanString(env.GOOGLE_OAUTH_CLIENT_SECRET);
 
   // Scopes resolution
-  const rawScopes = env.GOOGLE_WORKSPACE_SCOPES || envMap.VITE_GOOGLE_WORKSPACE_SCOPES;
-  const cleanedScopes =
-    cleanString(rawScopes) ||
-    'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly';
+  const cleanedScopes = cleanString(env.GOOGLE_WORKSPACE_SCOPES) || GOOGLE_WORKSPACE_SCOPES_STRING;
 
   const diagnostics: SafeDiagnostics = {
     clientIdConfigured: Boolean(cleanedClientId && cleanedClientId !== 'undefined'),
     clientIdSource: source,
     clientIdFingerprint: createSafeClientFingerprint(chosenRaw),
     clientIdLength: cleanedClientId.length,
+    clientIdFormatValid,
     hasQuotes,
     hasWhitespace,
     hasStandardSuffix,
@@ -148,9 +169,10 @@ export function resolveGoogleOAuthCredentials(
     redirectUriConfigured: Boolean(
       env.GOOGLE_OAUTH_REDIRECT_URI && cleanString(env.GOOGLE_OAUTH_REDIRECT_URI)
     ),
+    redirectUriValid: isValidRedirectUri(cleanedRedirectUri),
     redirectUri: cleanedRedirectUri,
     clientSecretConfigured: Boolean(cleanedClientSecret),
-    scopesConfigured: Boolean(rawScopes && cleanString(rawScopes)),
+    scopesConfigured: Boolean(cleanString(env.GOOGLE_WORKSPACE_SCOPES)),
     scopes: cleanedScopes,
   };
 
@@ -161,5 +183,49 @@ export function resolveGoogleOAuthCredentials(
     scopes: cleanedScopes,
     source,
     diagnostics,
+  };
+}
+
+/**
+ * Validates all Worker-side OAuth configuration at once so the start endpoint reports
+ * every missing or invalid binding. Messages contain variable names only — never values.
+ */
+export function validateGoogleOAuthConfig(
+  creds: ResolvedGoogleCredentials
+): GoogleOAuthConfigValidation {
+  const codes: GoogleOAuthConfigCode[] = [];
+
+  if (!creds.clientId) {
+    codes.push('MISSING_GOOGLE_CLIENT_ID');
+  } else if (!creds.diagnostics.clientIdFormatValid) {
+    codes.push('INVALID_GOOGLE_CLIENT_ID');
+  }
+  if (!creds.clientSecret) {
+    codes.push('MISSING_GOOGLE_CLIENT_SECRET');
+  }
+  if (!creds.diagnostics.redirectUriValid) {
+    codes.push('INVALID_GOOGLE_OAUTH_REDIRECT_URI');
+  }
+  if (!creds.scopes) {
+    codes.push('MISSING_GOOGLE_WORKSPACE_SCOPES');
+  }
+
+  const messages: Record<GoogleOAuthConfigCode, string> = {
+    MISSING_GOOGLE_CLIENT_ID:
+      'Google OAuth Client ID is not configured on Cloudflare Worker. Set the GOOGLE_OAUTH_CLIENT_ID secret on Worker builly-project.',
+    INVALID_GOOGLE_CLIENT_ID:
+      'Google OAuth Client ID is malformed. Set a valid Google OAuth Web Client ID in GOOGLE_OAUTH_CLIENT_ID on Worker builly-project.',
+    MISSING_GOOGLE_CLIENT_SECRET:
+      'Google OAuth Client Secret is not configured on Cloudflare Worker. Set the GOOGLE_OAUTH_CLIENT_SECRET secret on Worker builly-project.',
+    INVALID_GOOGLE_OAUTH_REDIRECT_URI:
+      'Google OAuth redirect URI is invalid. Set GOOGLE_OAUTH_REDIRECT_URI to an HTTPS URL ending in /api/auth/google/callback.',
+    MISSING_GOOGLE_WORKSPACE_SCOPES:
+      'Google Workspace scopes are not configured on Cloudflare Worker. Set GOOGLE_WORKSPACE_SCOPES on Worker builly-project.',
+  };
+
+  return {
+    ok: codes.length === 0,
+    codes,
+    message: codes.map((code) => messages[code]).join(' '),
   };
 }

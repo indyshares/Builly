@@ -1,7 +1,7 @@
 import { requireSession } from '../middleware/requireSession';
 import {
   resolveGoogleOAuthCredentials,
-  SafeDiagnostics,
+  validateGoogleOAuthConfig,
 } from '../security/googleOAuthCredentials';
 import { consumeOAuthStateRecord, createOAuthStateRecord } from '../security/oauthState';
 import {
@@ -71,11 +71,13 @@ export async function handleWorkspaceStatus(request: Request, env: WorkerEnv): P
  */
 export function handleGoogleOAuthDiagnostics(request: Request, env: WorkerEnv): Response {
   const creds = resolveGoogleOAuthCredentials(env, request.url);
+  const validation = validateGoogleOAuthConfig(creds);
   return Response.json({
     ok: true,
     service: 'builly-workspace-worker',
     endpoint: '/api/google/oauth/diagnostics',
     diagnostics: creds.diagnostics,
+    configValidation: validation,
   });
 }
 
@@ -85,13 +87,14 @@ export async function handleGoogleOAuthStart(request: Request, env: WorkerEnv): 
 
   const creds = resolveGoogleOAuthCredentials(env, request.url);
 
-  // Catch missing or invalid client_id before redirecting user to Google 401 error page
-  if (!creds.clientId) {
+  // Catch every missing or invalid Worker binding before redirecting the user to Google.
+  const validation = validateGoogleOAuthConfig(creds);
+  if (!validation.ok) {
     return Response.json(
       {
-        error:
-          'Google OAuth Client ID is not configured on Cloudflare Worker. Set GOOGLE_OAUTH_CLIENT_ID in Cloudflare secrets or variables.',
-        code: 'MISSING_GOOGLE_CLIENT_ID',
+        error: validation.message,
+        code: validation.codes[0],
+        codes: validation.codes,
         diagnostics: creds.diagnostics,
       },
       { status: 500 }
@@ -119,7 +122,8 @@ export async function handleGoogleOAuthStart(request: Request, env: WorkerEnv): 
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', creds.clientId);
-  authUrl.searchParams.set('redirect_uri', creds.redirectUri);
+  // Workspace reconnect uses its own callback path; login uses GOOGLE_OAUTH_REDIRECT_URI.
+  authUrl.searchParams.set('redirect_uri', new URL('/api/google/oauth/callback', request.url).toString());
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', creds.scopes);
   authUrl.searchParams.set('access_type', 'offline');
@@ -172,7 +176,7 @@ export async function handleGoogleOAuthCallback(
     body: new URLSearchParams({
       client_id: creds.clientId,
       client_secret: creds.clientSecret,
-      redirect_uri: creds.redirectUri,
+      redirect_uri: new URL('/api/google/oauth/callback', request.url).toString(),
       grant_type: 'authorization_code',
       code,
       code_verifier: consumed.codeVerifier,

@@ -154,10 +154,9 @@ async function requestConsoleJson<T>(
 
   let res: Response;
   try {
-    res = await fetch(requestUrl, {
+    res = await workerFetch(requestUrl, {
       ...init,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         ...(operationKey ? { 'Idempotency-Key': operationKey } : {}),
@@ -287,6 +286,12 @@ async function requestConsoleJson<T>(
   }
 
   return payload;
+}
+
+function workerFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.delete('Authorization');
+  return fetch(url, { ...init, headers, credentials: 'include' });
 }
 
 export const workspaceHierarchyClient = {

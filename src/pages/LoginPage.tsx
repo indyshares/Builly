@@ -20,7 +20,6 @@ import {
   consumePendingReturnTo,
   isEmbeddedIframe,
 } from '../features/identity/authService';
-import { clearStalePkceVerifiers } from '../features/identity/supabaseClient';
 import { buildLoginUrl, sanitizeReturnTo } from '../utils/routes';
 
 interface LoginPageProps {
@@ -71,7 +70,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       .then((res) => {
         if (!active) return;
         if (res.error) {
-          clearStalePkceVerifiers();
           setCallbackError(res.error);
           setCallbackBusy(false);
           return;
@@ -86,7 +84,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       })
       .catch((err) => {
         if (!active) return;
-        clearStalePkceVerifiers();
         setCallbackError(err instanceof Error ? err.message : t('auth.callbackFailed'));
         setCallbackBusy(false);
       });
@@ -161,7 +158,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        clearStalePkceVerifiers();
                         onNavigate(buildLoginUrl(safeReturnTo), { replace: true });
                       }}
                       className="min-h-[42px] px-4 py-2 rounded-lg bg-[#6C2CEB] hover:bg-[#5920CB] text-white text-sm font-semibold"
@@ -200,13 +196,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <div className="rounded-xl border border-[#211B2E]/12 bg-[#FAF9FC] p-4 space-y-2.5 text-xs text-[#211B2E]">
                 <div className="font-semibold">{t('auth.envVarsTitle')}</div>
                 <pre className="p-2.5 rounded-lg bg-[#211B2E] text-[#F7F6FA] font-mono text-[11px] overflow-x-auto">
-{`VITE_SUPABASE_URL="https://YOUR_PROJECT.supabase.co"
-VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_PUBLIC_ANON_KEY"`}
+{`VITE_CONSOLE_API_BASE_URL="https://builly-project.mycloudsfireworks.workers.dev"`}
                 </pre>
                 <p className="text-[#4A435C] leading-relaxed">
                   {t('auth.envVarsDescBefore')}{' '}
                   <code className="font-mono text-[#6C2CEB]">
-                    {typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback
+                    https://builly.indyshares.com/api/auth/google/callback
                   </code>{' '}
                   {t('auth.envVarsDescAfter')}
                 </p>
@@ -306,7 +301,7 @@ VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_PUBLIC_ANON_KEY"`}
               </div>
             </div>
           ) : (
-            /* Signed Out — Real Supabase Google Auth Entry */
+            /* Signed Out — Direct Builly Worker → Google OAuth entry */
             <div className="space-y-6">
               <div className="space-y-2">
                 <h1 className="font-['Outfit',sans-serif] text-2xl font-semibold text-[#211B2E]">

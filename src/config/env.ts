@@ -1,46 +1,23 @@
 import { CONSOLE_API_CONFIG } from './apiConfig';
 
-const DEFAULT_WORKSPACE_SCOPES = [
-  'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.metadata.readonly',
-] as const;
-
+// Scopes are supplied by VITE_GOOGLE_WORKSPACE_SCOPES at build time. The Worker's
+// worker/src/config/googleScopes.ts is the authoritative list; no divergent frontend default.
 function parseScopes(raw?: string): readonly string[] {
   if (!raw || !raw.trim()) {
-    return DEFAULT_WORKSPACE_SCOPES;
+    return [];
   }
   const parsed = raw
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  return parsed.length > 0 ? parsed : DEFAULT_WORKSPACE_SCOPES;
+  return parsed;
 }
 
 function cleanPublicEnv(val?: string): string {
   return typeof val === 'string' ? val.trim() : '';
 }
 
-function isValidSupabaseUrl(url: string): boolean {
-  if (!url) return false;
-  if (url.includes('YOUR_PROJECT_REF')) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
-
-function isValidSupabaseAnonKey(key: string): boolean {
-  if (!key) return false;
-  if (key === 'YOUR_SUPABASE_ANON_KEY') return false;
-  return key.length >= 20;
-}
-
 const env = import.meta.env;
-const supabaseUrl = cleanPublicEnv(env.VITE_SUPABASE_URL);
-const supabaseAnonKey = cleanPublicEnv(env.VITE_SUPABASE_ANON_KEY);
 
 export const ENV_CONFIG = {
   appUrl:
@@ -50,13 +27,10 @@ export const ENV_CONFIG = {
   googleWorkspaceScopes: parseScopes(env.VITE_GOOGLE_WORKSPACE_SCOPES),
   driveFolderName: cleanPublicEnv(env.VITE_INDYSHARES_DRIVE_FOLDER_NAME) || 'Builly',
   schemaVersion: cleanPublicEnv(env.VITE_INDYSHARES_SCHEMA_VERSION) || '2.0',
-  // Public Supabase Auth configuration ONLY (never store service_role key in VITE_*)
-  supabaseUrl,
-  supabaseAnonKey,
-  isSupabaseConfigured: isValidSupabaseUrl(supabaseUrl) && isValidSupabaseAnonKey(supabaseAnonKey),
-  // Normalized absolute Worker / Console API origin (never a bare hostname or relative path)
+  // Builly session APIs live on the same Worker origin as the Console API.
   consoleApiBaseUrl: CONSOLE_API_CONFIG.origin,
   workerApiUrl: CONSOLE_API_CONFIG.origin,
   isWorkerConfigured: CONSOLE_API_CONFIG.isConfigured,
+  isAuthConfigured: CONSOLE_API_CONFIG.isConfigured,
   workerConfigError: CONSOLE_API_CONFIG.error?.message || null,
 } as const;
