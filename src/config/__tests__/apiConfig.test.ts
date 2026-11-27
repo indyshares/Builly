@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiConfigurationError,
+  SAME_ORIGIN_CONFIG,
   buildConsoleApiUrl,
   evaluateConsoleApiConfig,
   resolveConsoleApiOrigin,
@@ -81,6 +82,13 @@ describe('Centralized Console API origin resolution', () => {
     expect(endpoint).not.toContain('run.app/builly-project.mycloudsfireworks.workers.dev');
   });
 
+  it('supports explicit same-origin configuration with relative /api/* URLs', () => {
+    const config = evaluateConsoleApiConfig(SAME_ORIGIN_CONFIG);
+    expect(config.isConfigured).toBe(true);
+    expect(config.origin).toBeTruthy();
+    expect(buildConsoleApiUrl('/api/auth/session')).toBe('/api/auth/session');
+  });
+
   it('builds the Google OAuth start URL against the deployed Worker origin', () => {
     const endpoint = buildConsoleApiUrl(
       '/api/google/oauth/start',
@@ -110,7 +118,7 @@ describe('Centralized Console API origin resolution', () => {
     expect(bootstrap.organizations).toEqual([]);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [calledUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(calledUrl).toMatch(/^https?:\/\//);
+    expect(calledUrl).toMatch(/^(\/api\/|https?:\/\/)/);
     expect(calledUrl.endsWith('/api/console/bootstrap')).toBe(true);
     expect(calledUrl).not.toContain('run.app/builly-project.mycloudsfireworks.workers.dev');
 

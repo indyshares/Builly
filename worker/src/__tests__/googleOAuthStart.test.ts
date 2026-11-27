@@ -31,7 +31,8 @@ async function createEnv(
         '616978390438-6mdf7p75veerl1aqk2gimal5kpp7c9f8.apps.googleusercontent.com',
       GOOGLE_OAUTH_CLIENT_SECRET: 'test-secret-value',
       GOOGLE_OAUTH_REDIRECT_URI: 'https://builly.indyshares.com/api/auth/google/callback',
-      GOOGLE_WORKSPACE_SCOPES: 'https://www.googleapis.com/auth/drive.file',
+      GOOGLE_WORKSPACE_SCOPES:
+        'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets',
       TOKEN_ENCRYPTION_KEY: 'test-key',
       AUTH_STORE: store,
       ...overrides,
@@ -93,6 +94,7 @@ describe('handleGoogleOAuthStart', () => {
       'client_id=616978390438-6mdf7p75veerl1aqk2gimal5kpp7c9f8.apps.googleusercontent.com'
     );
     expect(body.authorizeUrl).toContain('redirect_uri=https%3A%2F%2Fbuilly-project.mycloudsfireworks.workers.dev%2Fapi%2Fgoogle%2Foauth%2Fcallback');
+    expect(body.authorizeUrl).toContain('scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive');
     expect(JSON.stringify(body)).not.toContain('test-secret-value');
   });
 });

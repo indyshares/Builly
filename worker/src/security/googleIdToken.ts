@@ -6,6 +6,8 @@
 const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const VALID_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 const JWKS_TTL_MS = 60 * 60 * 1000;
+const JWKS_FETCH_TIMEOUT_MS = 5_000;
+const JWKS_MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 
 type GoogleJwk = JsonWebKey & { kid?: string };
 
@@ -32,10 +34,23 @@ export interface VerifiedGoogleIdentityClaims {
   avatarUrl?: string;
 }
 
-let jwksCache: { keys: Map<string, GoogleJwk>; fetchedAt: number } | null = null;
+interface JwksCache {
+  keys: Map<string, GoogleJwk>;
+  fetchedAt: number;
+  lastRefreshAt: number;
+}
+
+let jwksCache: JwksCache | null = null;
+let inFlightRefresh: Promise<Map<string, GoogleJwk>> | null = null;
 
 export function clearGoogleJwksCache(): void {
   jwksCache = null;
+  inFlightRefresh = null;
+}
+
+/** Test seam: allows simulating a later refresh window without waiting real time. */
+export function resetJwksRefreshWindowForTest(): void {
+  if (jwksCache) jwksCache.lastRefreshAt = 0;
 }
 
 function decodeBase64Url(value: string): Uint8Array {
@@ -47,27 +62,52 @@ function decodeBase64Url(value: string): Uint8Array {
 }
 
 async function fetchJwks(): Promise<Map<string, GoogleJwk>> {
-  const response = await fetch(GOOGLE_CERTS_URL);
+  let response: Response;
+  try {
+    response = await fetch(GOOGLE_CERTS_URL, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error('GOOGLE_JWKS_UNAVAILABLE');
+  }
   if (!response.ok) throw new Error('GOOGLE_JWKS_UNAVAILABLE');
   const body = (await response.json()) as { keys?: GoogleJwk[] };
-  const keys = new Map<string, JsonWebKey>();
+  const keys = new Map<string, GoogleJwk>();
   for (const key of body.keys || []) {
     if (key.kid) keys.set(key.kid, key);
   }
-  jwksCache = { keys, fetchedAt: Date.now() };
+  const now = Date.now();
+  jwksCache = { keys, fetchedAt: now, lastRefreshAt: now };
   return keys;
 }
 
-async function getSigningKey(kid: string, allowRefresh = true): Promise<GoogleJwk> {
+/** Concurrent callers share one refresh; refreshes are bounded to one per interval. */
+async function refreshJwks(): Promise<Map<string, GoogleJwk>> {
+  if (inFlightRefresh) return inFlightRefresh;
+  const now = Date.now();
+  if (jwksCache && now - jwksCache.lastRefreshAt < JWKS_MIN_REFRESH_INTERVAL_MS) {
+    return jwksCache.keys;
+  }
+  inFlightRefresh = fetchJwks().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+async function getSigningKey(kid: string): Promise<GoogleJwk> {
   const now = Date.now();
   if (!jwksCache || now - jwksCache.fetchedAt > JWKS_TTL_MS) {
-    await fetchJwks();
+    await refreshJwks();
   }
-  const cached = jwksCache!.keys.get(kid);
+  const cached = jwksCache?.keys.get(kid);
   if (cached) return cached;
-  if (allowRefresh) {
-    await fetchJwks();
-    const refreshed = jwksCache!.keys.get(kid);
+
+  // Unknown kid: refresh at most once per bounded interval, then fail closed.
+  const before = jwksCache?.lastRefreshAt ?? 0;
+  const keys = await refreshJwks();
+  if ((jwksCache?.lastRefreshAt ?? 0) > before) {
+    const refreshed = keys.get(kid);
     if (refreshed) return refreshed;
   }
   throw new Error('UNKNOWN_GOOGLE_SIGNING_KEY');

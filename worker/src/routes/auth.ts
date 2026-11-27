@@ -1,4 +1,5 @@
 import {
+  cleanupExpiredOAuthTransactions,
   createBuillySession,
   createD1AuthStore,
   hashSessionToken,
@@ -38,14 +39,13 @@ function redirectTo(origin: string, path: string, params: Record<string, string>
   return new Response(null, { status: 302, headers: { Location: target.toString() } });
 }
 
-function sessionCookie(token: string): string {
-  // SameSite=None is required while the SPA and Worker API are on different sites.
-  // Both cookies remain HttpOnly, Secure, and never readable by JavaScript.
-  return `${BUILLY_SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`;
+function sessionCookie(token: string, secure: boolean): string {
+  // Production is same-origin: no third-party cookie, no cross-site CORS.
+  return `${BUILLY_SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`;
 }
 
-function clearedSessionCookie(): string {
-  return `${BUILLY_SESSION_COOKIE}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`;
+function clearedSessionCookie(secure: boolean): string {
+  return `${BUILLY_SESSION_COOKIE}=; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=0`;
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -115,6 +115,7 @@ export async function handleAuthGoogleStart(request: Request, env: WorkerEnv): P
     );
   }
 
+  await cleanupExpiredOAuthTransactions(storeFor(env));
   const returnTo = sanitizeReturnTo(new URL(request.url).searchParams.get('returnTo'));
   const state = generateHighEntropyToken(32);
   const bindingSecret = generateHighEntropyToken(32);
@@ -241,7 +242,8 @@ export async function handleAuthGoogleCallback(request: Request, env: WorkerEnv)
     try {
       await saveEncryptedWorkspaceCredential(env, {
         ownerId: account.id,
-        googleSubject: identity.subject,
+        googleSubject: '',
+        googleOidcSub: identity.subject,
         googleEmail: identity.email,
         googleName: identity.displayName || identity.email || 'Connected Google Account',
         googleAvatar: identity.avatarUrl || '',
@@ -258,7 +260,7 @@ export async function handleAuthGoogleCallback(request: Request, env: WorkerEnv)
   const response = redirectTo(transaction.frontendOrigin, transaction.returnTo, {
     ...(workspaceError ? { workspace_error: workspaceError } : {}),
   });
-  response.headers.append('Set-Cookie', sessionCookie(session.token));
+  response.headers.append('Set-Cookie', sessionCookie(session.token, secure));
   response.headers.append('Set-Cookie', clearedBindingCookie(secure));
   return response;
 }
@@ -288,7 +290,7 @@ export async function handleAuthLogout(request: Request, env: WorkerEnv): Promis
   const token = readSessionCookie(request);
   if (token) await revokeBuillySession(storeFor(env), token).catch(() => undefined);
   const response = Response.json({ ok: true });
-  response.headers.append('Set-Cookie', clearedSessionCookie());
+  response.headers.append('Set-Cookie', clearedSessionCookie(new URL(request.url).protocol === 'https:'));
   return response;
 }
 

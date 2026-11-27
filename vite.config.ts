@@ -20,6 +20,14 @@ export default defineConfig(() => {
       headers: {
         'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
       },
+      // Same-origin /api/* in dev: proxy to the deployed Worker (or wrangler dev on 8787).
+      proxy: {
+        '/api': {
+          target: 'https://builly-project.mycloudsfireworks.workers.dev',
+          changeOrigin: true,
+          secure: true,
+        },
+      },
     },
     preview: {
       headers: {

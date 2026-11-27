@@ -25,6 +25,7 @@ export interface VerifiedSession {
 export interface StoredCredentialRow {
   owner_id: string;
   google_subject: string;
+  google_oidc_sub: string;
   google_email: string;
   google_name: string;
   google_avatar: string;

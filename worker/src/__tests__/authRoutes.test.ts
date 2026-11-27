@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handleAuthGoogleStart, resolveFrontendOrigin } from '../routes/auth';
+import { handleAuthGoogleStart, handleAuthLogout, handleAuthSession, resolveFrontendOrigin } from '../routes/auth';
 import { createMemoryAuthStore } from '../services/buillyAuth';
 import { WorkerEnv } from '../types';
 
@@ -64,6 +64,29 @@ describe('Google login origin allowlist', () => {
     const cookie = res.headers.get('Set-Cookie') || '';
     expect(cookie).toContain('builly_oauth_binding=');
     expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('Secure');
     expect(cookie).toContain('SameSite=Lax');
+  });
+});
+
+describe('Builly session cookie lifecycle', () => {
+  it('returns 401 for session restoration without a cookie', async () => {
+    const res = await handleAuthSession(new Request('https://builly.indyshares.com/api/auth/session'), envWith());
+    expect(res.status).toBe(401);
+    expect((await res.json() as { authenticated: boolean }).authenticated).toBe(false);
+  });
+
+  it('logout clears the session cookie with matching production attributes', async () => {
+    const res = await handleAuthLogout(
+      new Request('https://builly.indyshares.com/api/auth/logout', { method: 'POST' }),
+      envWith()
+    );
+    expect(res.status).toBe(200);
+    const cleared = res.headers.get('Set-Cookie') || '';
+    expect(cleared).toContain('HttpOnly');
+    expect(cleared).toContain('Secure');
+    expect(cleared).toContain('SameSite=Lax');
+    expect(cleared).toContain('Path=/');
+    expect(cleared).toContain('Max-Age=0');
   });
 });

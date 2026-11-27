@@ -64,6 +64,7 @@ export interface AuthStore {
   insertOAuthTransaction(row: OAuthTransactionRow): Promise<void>;
   consumeOAuthTransaction(stateHash: string, consumedAt: number): Promise<OAuthTransactionRow | null>;
   insertAudit(accountId: string, event: string, metadata: string, createdAt: number): Promise<void>;
+  cleanupExpiredTransactions(now: number, limit: number): Promise<number>;
 }
 
 const IDLE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -143,6 +144,17 @@ export function createMemoryAuthStore(): AuthStore & {
       return { ...row };
     },
     async insertAudit() {},
+    async cleanupExpiredTransactions(now, limit) {
+      let removed = 0;
+      for (const [key, row] of transactions) {
+        if (removed >= limit) break;
+        if (row.consumedAt !== null || row.expiresAt <= now) {
+          transactions.delete(key);
+          removed += 1;
+        }
+      }
+      return removed;
+    },
   };
 }
 
@@ -295,6 +307,20 @@ export function createD1AuthStore(db: D1Database): AuthStore {
         )
         .bind(accountId, event, createdAt, metadata)
         .run();
+    },
+    async cleanupExpiredTransactions(now, limit) {
+      const result = await db
+        .prepare(
+          `DELETE FROM oauth_transactions
+           WHERE rowid IN (
+             SELECT rowid FROM oauth_transactions
+             WHERE consumed_at IS NOT NULL OR expires_at <= ?
+             LIMIT ?
+           )`
+        )
+        .bind(now, limit)
+        .run();
+      return Number((result as { changes?: number }).changes || 0);
     },
   };
 }
@@ -507,5 +533,14 @@ export async function revokeBuillySession(store: AuthStore, token: string): Prom
 
 export async function revokeAllBuillySessions(store: AuthStore, accountId: string): Promise<void> {
   await store.revokeSessionsForAccount(accountId, Date.now());
+}
+
+/** Bounded cleanup; never removes active transactions. */
+export async function cleanupExpiredOAuthTransactions(
+  store: AuthStore,
+  now: number = Date.now(),
+  limit = 100
+): Promise<number> {
+  return store.cleanupExpiredTransactions(now, limit);
 }
 

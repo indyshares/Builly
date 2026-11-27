@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cleanupExpiredOAuthTransactions,
   createBuillySession,
   createMemoryAuthStore,
   hashSessionToken,
@@ -74,6 +75,41 @@ describe('Builly session service', () => {
     await revokeAllBuillySessions(store, 'account-1');
     expect(await resolveBuillySession(store, a.token, Date.now())).toBeNull();
     expect(await resolveBuillySession(store, b.token, Date.now())).toBeNull();
+  });
+});
+
+describe('OAuth transaction cleanup', () => {
+  it('removes only expired or consumed transactions, bounded by limit', async () => {
+    const store = createMemoryAuthStore();
+    for (let i = 0; i < 3; i++) {
+      await store.insertOAuthTransaction({
+        stateHash: `expired-${i}`,
+        browserBindingHash: 'hash',
+        nonce: 'nonce',
+        codeVerifier: 'verifier',
+        redirectUri: 'https://builly.indyshares.com/api/auth/google/callback',
+        returnTo: '/console',
+        frontendOrigin: 'https://builly.indyshares.com',
+        createdAt: 0,
+        expiresAt: 100,
+        consumedAt: null,
+      });
+    }
+    await store.insertOAuthTransaction({
+      stateHash: 'active',
+      browserBindingHash: 'hash',
+      nonce: 'nonce',
+      codeVerifier: 'verifier',
+      redirectUri: 'https://builly.indyshares.com/api/auth/google/callback',
+      returnTo: '/console',
+      frontendOrigin: 'https://builly.indyshares.com',
+      createdAt: 0,
+      expiresAt: 10_000,
+      consumedAt: null,
+    });
+    expect(await cleanupExpiredOAuthTransactions(store, 200, 2)).toBe(2);
+    expect(await store.getSession('x')).toBeNull();
+    expect(await store.consumeOAuthTransaction('active', 200)).not.toBeNull();
   });
 });
 

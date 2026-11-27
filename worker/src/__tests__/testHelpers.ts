@@ -562,12 +562,14 @@ export function createInMemoryMockD1() {
     }
 
     if (q.startsWith('INSERT INTO workspace_credentials')) {
-      const [owner_id, google_subject, google_email, google_name, google_avatar, granted_scopes, encrypted_refresh_token, encryption_iv, created_at, updated_at] =
+      const [owner_id, google_subject, google_oidc_sub, google_email, google_name, google_avatar, granted_scopes, encrypted_refresh_token, encryption_iv, created_at, updated_at] =
         params as string[];
       const idx = credentials.findIndex((c) => c.owner_id === owner_id);
+      const existing = idx >= 0 ? credentials[idx] : null;
       const next: StoredCredentialRow = {
         owner_id,
         google_subject,
+        google_oidc_sub: google_oidc_sub || existing?.google_oidc_sub || '',
         google_email,
         google_name,
         google_avatar,
@@ -2476,6 +2478,7 @@ export async function seedConnectedCredential(
   const row: StoredCredentialRow = {
     owner_id: owner.ownerId,
     google_subject: `sub_${owner.ownerId}`,
+    google_oidc_sub: '',
     google_email: owner.email,
     google_name: owner.email.split('@')[0] || 'User',
     google_avatar: '',

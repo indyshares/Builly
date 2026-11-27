@@ -104,11 +104,31 @@ function readRawApiBaseUrl(): string {
   return legacy;
 }
 
+export const SAME_ORIGIN_CONFIG = 'same-origin';
+
+function isSameOriginConfigured(raw: string): boolean {
+  return raw.toLowerCase() === SAME_ORIGIN_CONFIG;
+}
+
+function sameOriginFallback(): string {
+  return typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'https://builly.indyshares.com';
+}
+
 export function evaluateConsoleApiConfig(
   rawOverride?: string | null,
   options?: ResolveApiOriginOptions
 ): ConsoleApiConfigState {
   const rawConfigured = rawOverride !== undefined ? (rawOverride || '').trim() : readRawApiBaseUrl();
+  if (isSameOriginConfigured(rawConfigured)) {
+    return {
+      origin: sameOriginFallback(),
+      rawConfigured,
+      isConfigured: true,
+      error: null,
+    };
+  }
   if (!rawConfigured) {
     return {
       origin: '',
@@ -170,6 +190,10 @@ export function buildConsoleApiUrl(
 
   if (CONSOLE_API_CONFIG.error) {
     throw CONSOLE_API_CONFIG.error;
+  }
+
+  if (isSameOriginConfigured(CONSOLE_API_CONFIG.rawConfigured)) {
+    return normalizedPath;
   }
 
   if (CONSOLE_API_CONFIG.origin) {

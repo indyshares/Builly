@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clearGoogleJwksCache, verifyGoogleIdToken } from '../security/googleIdToken';
+import {
+  clearGoogleJwksCache,
+  resetJwksRefreshWindowForTest,
+  verifyGoogleIdToken,
+} from '../security/googleIdToken';
 
 function b64url(value: string | Uint8Array): string {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
@@ -140,7 +144,103 @@ describe('verifyGoogleIdToken', () => {
       nonce: 'nonce-abc',
       exp: 2000,
     });
+    await expect(verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500)).rejects.toThrow(
+      'UNKNOWN_GOOGLE_SIGNING_KEY'
+    );
+    resetJwksRefreshWindowForTest();
     const identity = await verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500);
     expect(identity.subject).toBe('google-sub-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses a cached key without refetching', async () => {
+    const { privateKey, jwk } = await makeKey();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const claims = {
+      iss: 'https://accounts.google.com',
+      aud: 'client-123',
+      sub: 'google-sub-1',
+      email: 'user@example.com',
+      email_verified: true,
+      nonce: 'nonce-abc',
+      exp: 2000,
+    };
+    const token = await signToken(privateKey, claims);
+    await verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500);
+    await verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds repeated unknown-kid refreshes', async () => {
+    const { privateKey, jwk } = await makeKey();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const token = await signToken(
+      privateKey,
+      {
+        iss: 'https://accounts.google.com',
+        aud: 'client-123',
+        sub: 'google-sub-1',
+        email: 'user@example.com',
+        email_verified: true,
+        nonce: 'nonce-abc',
+        exp: 2000,
+      },
+      { alg: 'RS256', kid: 'unknown-kid', typ: 'JWT' }
+    );
+    await expect(verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500)).rejects.toThrow(
+      'UNKNOWN_GOOGLE_SIGNING_KEY'
+    );
+    await expect(verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500)).rejects.toThrow(
+      'UNKNOWN_GOOGLE_SIGNING_KEY'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the JWKS request times out', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('AbortError')));
+    const { privateKey } = await makeKey();
+    const token = await signToken(privateKey, {
+      iss: 'https://accounts.google.com',
+      aud: 'client-123',
+      sub: 'google-sub-1',
+      email: 'user@example.com',
+      email_verified: true,
+      nonce: 'nonce-abc',
+      exp: 2000,
+    });
+    await expect(verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500)).rejects.toThrow(
+      'GOOGLE_JWKS_UNAVAILABLE'
+    );
+  });
+
+  it('dedupes concurrent JWKS refreshes', async () => {
+    const { privateKey, jwk } = await makeKey();
+    let resolveFetch!: (value: Response) => void;
+    const fetchMock = vi.fn(
+      () => new Promise<Response>((resolve) => { resolveFetch = resolve; })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const token = await signToken(privateKey, {
+      iss: 'https://accounts.google.com',
+      aud: 'client-123',
+      sub: 'google-sub-1',
+      email: 'user@example.com',
+      email_verified: true,
+      nonce: 'nonce-abc',
+      exp: 2000,
+    });
+    const first = verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500);
+    const second = verifyGoogleIdToken(token, 'client-123', 'nonce-abc', 1500);
+    resolveFetch(new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }));
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.subject).toBe('google-sub-1');
+    expect(b.subject).toBe('google-sub-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

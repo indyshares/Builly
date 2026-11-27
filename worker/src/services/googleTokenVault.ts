@@ -7,6 +7,7 @@ export async function saveEncryptedWorkspaceCredential(
   params: {
     ownerId: string;
     googleSubject: string;
+    googleOidcSub?: string;
     googleEmail: string;
     googleName: string;
     googleAvatar: string;
@@ -19,11 +20,12 @@ export async function saveEncryptedWorkspaceCredential(
 
   await env.DB.prepare(
     `INSERT INTO workspace_credentials (
-       owner_id, google_subject, google_email, google_name, google_avatar,
+       owner_id, google_subject, google_oidc_sub, google_email, google_name, google_avatar,
        granted_scopes, encrypted_refresh_token, encryption_iv, status, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
      ON CONFLICT(owner_id) DO UPDATE SET
        google_subject = excluded.google_subject,
+       google_oidc_sub = CASE WHEN excluded.google_oidc_sub = '' THEN workspace_credentials.google_oidc_sub ELSE excluded.google_oidc_sub END,
        google_email = excluded.google_email,
        google_name = excluded.google_name,
        google_avatar = excluded.google_avatar,
@@ -36,6 +38,7 @@ export async function saveEncryptedWorkspaceCredential(
     .bind(
       params.ownerId,
       params.googleSubject,
+      params.googleOidcSub || '',
       params.googleEmail,
       params.googleName,
       params.googleAvatar,

@@ -42,7 +42,6 @@ function withCors(request: Request, env: WorkerEnv, response: Response): Respons
     .filter(Boolean);
 
   const defaultAllowed = [
-    'https://builly-project.mycloudsfireworks.workers.dev',
     'https://builly.indyshares.com',
     'http://localhost:3000',
     'http://localhost:8787',
@@ -50,15 +49,8 @@ function withCors(request: Request, env: WorkerEnv, response: Response): Respons
 
   const allowed = Array.from(new Set([...configuredAllowed, ...defaultAllowed]));
 
-  const isDynamicAllowed =
-    reqOrigin.endsWith('.run.app') ||
-    reqOrigin.endsWith('.workers.dev') ||
-    reqOrigin.endsWith('.indyshares.com') ||
-    reqOrigin.startsWith('http://localhost:') ||
-    reqOrigin.startsWith('http://127.0.0.1:');
-
   const headers = new Headers(response.headers);
-  if (reqOrigin && (allowed.includes(reqOrigin) || isDynamicAllowed)) {
+  if (reqOrigin && allowed.includes(reqOrigin)) {
     headers.set('Access-Control-Allow-Origin', reqOrigin);
     headers.set('Access-Control-Allow-Credentials', 'true');
   } else if (request.url.includes('/api/public/')) {
@@ -66,7 +58,7 @@ function withCors(request: Request, env: WorkerEnv, response: Response): Respons
   }
 
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Cookie, Idempotency-Key, If-Match');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, If-Match');
   headers.set('Access-Control-Max-Age', '86400');
   headers.set('Vary', 'Origin');
 
