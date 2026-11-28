@@ -933,6 +933,7 @@ export async function completeOnboarding(
     accessToken,
     repairResourceType: 'organization',
     repairResourceId: orgId,
+    leaseMs: 300_000,
     steps: [
       {
         key: 'bootstrap_account_root',

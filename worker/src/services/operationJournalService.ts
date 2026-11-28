@@ -353,6 +353,7 @@ export interface RunSagaOptions<TResult extends Record<string, unknown>> {
   updateProjection: (result: TResult, ctx: SagaStepContext) => Promise<void>;
   repairResourceType: string;
   repairResourceId: string;
+  leaseMs?: number;
 }
 
 export async function runSagaWithJournal<TResult extends Record<string, unknown>>(
@@ -409,7 +410,7 @@ export async function runSagaWithJournal<TResult extends Record<string, unknown>
 
   return withMutationLock(
     env,
-    { scopeKey: options.scopeKey, operationId: options.operationId },
+    { scopeKey: options.scopeKey, operationId: options.operationId, leaseMs: options.leaseMs },
     async (lock) => {
       let operationsFolderId = options.initialOperationsFolderId || '';
       let driveJournalFileId = '';
@@ -537,7 +538,8 @@ export async function runSagaWithJournal<TResult extends Record<string, unknown>
           stepState.status = 'pending';
         }
 
-        // Fencing check before every Drive mutation
+        // Fencing check before every Drive mutation (renew lease first for long runs)
+        await lock.renew(options.leaseMs);
         await lock.verify();
 
         stepState.attempts = (stepState.attempts || 0) + 1;
@@ -585,6 +587,7 @@ export async function runSagaWithJournal<TResult extends Record<string, unknown>
       }
 
       // Renew & verify lock right before final completion mark
+      await lock.renew(options.leaseMs);
       await lock.verify();
 
       const result = options.buildResult(ctx);

@@ -16,7 +16,7 @@ Secrets (Worker Secrets only, never `VITE_*`):
 
 ## Frontend build variables
 
-- `VITE_CONSOLE_API_BASE_URL` = Worker origin, e.g. `https://builly-project.mycloudsfireworks.workers.dev`
+- `VITE_CONSOLE_API_BASE_URL` = `same-origin` in production (relative `/api/*`); see `docs/PRODUCTION_CUTOVER_RUNBOOK.md`
 - Builder's existing public GIS variables remain public only; never place a client secret in them.
 
 ## Google Cloud Console
@@ -30,8 +30,8 @@ Apply `worker/migrations/0005_builly_identity.sql` additively. It creates `accou
 
 ## Existing users
 
-1. Build a JSON mapping of `{ legacyOwnerId, googleSubject, email?, displayName? }`.
-2. Run `npx tsx scripts/migrate-supabase-identities.ts mappings.json` (dry run).
-3. Review warnings and emitted SQL; apply only after owner approval.
+1. Build `mappings.json` and an owner-attested live-D1 `preflight.json`.
+2. Run `npx tsx scripts/migrate-supabase-identities.ts mappings.json --preflight preflight.json --emit identity-migration.sql`.
+3. Review emitted SQL and apply manually only after owner approval. Full procedure: `docs/PRODUCTION_CUTOVER_RUNBOOK.md`.
 
 Email is never used as an automatic merge key.
